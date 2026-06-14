@@ -26,33 +26,67 @@ const uint8_t APBPrescTable[8]  = {0, 0, 0, 0, 1, 2, 3, 4};
  */
 void SystemInit(void)
 {
-    /* HSI ON */
-    RCC->CR |= (uint32_t)0x00000001;
+    volatile uint32_t timeout;
 
-    /* Flash: 2 wait states */
-    FLASH->ACR |= FLASH_ACR_LATENCY_2;
+    /* ---- 标准复位序列 (来自 ST 官方 SystemInit) ---- */
+    RCC->CR |= (uint32_t)0x00000001;          /* HSION */
 
-    /* HCLK = SYSCLK, PCLK2 = HCLK, PCLK1 = HCLK/2 */
+    /* 复位 CFGR: SW, HPRE, PPRE1, PPRE2, ADCPRE, MCO */
     RCC->CFGR &= (uint32_t)0xF8FF0000;
-    RCC->CFGR |= (uint32_t)0x00000400;
 
-    /* HSE ON */
+    /* 关 HSE, CSS, PLL */
     RCC->CR &= (uint32_t)0xFEF6FFFF;
-    RCC->CR |= (uint32_t)0x00010000;
-    while ((RCC->CR & RCC_CR_HSERDY) == 0);
 
-    /* PLL: HSE × 9 = 72MHz */
-    RCC->CFGR &= (uint32_t)0xFF0FFFFF;
-    RCC->CFGR |= (uint32_t)0x001D0000;
+    /* 清 HSEBYP */
+    RCC->CR &= (uint32_t)0xFFFBFFFF;
 
-    /* PLL ON */
-    RCC->CR |= (uint32_t)0x01000000;
-    while ((RCC->CR & RCC_CR_PLLRDY) == 0);
+    /* 清 PLLSRC, PLLXTPRE, PLLMUL, USBPRE */
+    RCC->CFGR &= (uint32_t)0xFF80FFFF;
 
-    /* PLL as system clock */
-    RCC->CFGR &= (uint32_t)0x00FFFFFF;
-    RCC->CFGR |= (uint32_t)0x00000002;
-    while ((RCC->CFGR & RCC_CFGR_SWS) != 0x00000008);
+    /* 关所有 RCC 中断并清 pending */
+    RCC->CIR = 0x009F0000;
+
+    /* ---- Flash: Prefetch + 2 wait states ---- */
+    FLASH->ACR |= 0x00000010;                 /* PRFTBE */
+    FLASH->ACR &= ~((uint32_t)0x00000007);    /* 清 LATENCY */
+    FLASH->ACR |= 0x00000002;                 /* LATENCY=2 (72MHz) */
+
+    /* ---- 总线预分频 ---- */
+    RCC->CFGR |= (uint32_t)0x00000400;        /* PPRE1 = HCLK/2 */
+
+    /* ---- 尝试 HSE ---- */
+    RCC->CR |= (uint32_t)0x00010000;          /* HSEON */
+    timeout = 0;
+    while ((RCC->CR & RCC_CR_HSERDY) == 0) {
+        if (++timeout >= 0x10000) {
+            RCC->CR &= ~((uint32_t)0x00010000); /* 关 HSE */
+            goto use_hsi;
+        }
+    }
+
+    /* ---- HSE OK → PLL ×9 = 72MHz ---- */
+    RCC->CFGR |= (uint32_t)0x001D0000;        /* PLLSRC=HSE, PLLMUL=9 */
+    RCC->CR |= (uint32_t)0x01000000;          /* PLLON */
+    timeout = 0;
+    while ((RCC->CR & RCC_CR_PLLRDY) == 0) {
+        if (++timeout >= 0x10000) goto use_hsi;
+    }
+
+    /* 切换到 PLL */
+    RCC->CFGR &= ~((uint32_t)0x00000003);
+    RCC->CFGR |= (uint32_t)0x00000002;        /* SW = PLL */
+    timeout = 0;
+    while ((RCC->CFGR & RCC_CFGR_SWS) != 0x00000008) {
+        if (++timeout >= 0x10000) goto use_hsi;
+    }
+    SystemCoreClock = 72000000;
+    return;
+
+use_hsi:
+    /* 回退到 HSI 8MHz */
+    RCC->CR &= ~((uint32_t)0x01010000);       /* 关 PLL + HSE */
+    RCC->CFGR &= ~((uint32_t)0x00000003);     /* SW = HSI */
+    SystemCoreClock = 8000000;
 }
 
 /**

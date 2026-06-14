@@ -10,7 +10,7 @@
  *
  *   vWatchdogTask(Prio 4, Stack 128W) — IWDG 看门狗监控 + 心跳检查
  *   vSensorTask  (Prio 3, Stack 256W) — 传感器 1s 采集 + 告警判定
- *   vGPSTask     (Prio 2, Stack 256W) — GPS 200ms 轮询 + NMEA→Decimal
+ *   vGPSTask     (Prio 2, Stack 384W) — GPS 200ms 轮询 + NMEA→Decimal
  *   vIOTTask     (Prio 2, Stack 512W) — LoRa 收发 + 4 服务上报 + 命令处理
  *   vRFIDTask    (Prio 1, Stack 128W) — RFID 500ms 扫描
  *   vLEDTask     (Prio 1, Stack 128W) — 水质 & 命令 LED 指示
@@ -527,17 +527,98 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 int main(void)
 {
+    /* ==============================================================
+     * 最简 LED 闪烁 — 不依赖任何外设，仅验证程序到达 main()
+     * 红灯 PB6 (共阳极: 低电平亮)
+     * 闪烁 3 次 = main() 被成功调用
+     * ============================================================== */
+    {
+        volatile uint32_t delay;
+        RCC->APB2ENR |= RCC_APB2Periph_GPIOB;
+        GPIOB->CRL &= ~((uint32_t)0x0F << 24);
+        GPIOB->CRL |=  (uint32_t)0x03 << 24;
+        GPIOB->BSRR = 0x0040;
+
+        for (int n = 0; n < 3; n++)
+        {
+            GPIOB->BRR  = 0x0040;
+            for (delay = 0; delay < 2400000; delay++) { __NOP(); }
+            GPIOB->BSRR = 0x0040;
+            for (delay = 0; delay < 2400000; delay++) { __NOP(); }
+        }
+    }
+
     /* ---- 硬件初始化 ---- */
-    LED_RGB_Init();
-    ADC_Common_Init();
-    PH_Sensor_Init();
-    Turbidity_Sensor_Init();
-    Temp_Sensor_Init();
-    TDS_Sensor_Init();
-    GPS_Init();
-    LoRa_Init();
-    RC522_Init();
+    /* 调试串口必须最先初始化, 否则 LoRa/GPS 阻塞时无任何输出 */
     Debug_USART_Init();
+
+    /* LED 闪 1 次: Debug_USART_Init 完成 */
+    {
+        volatile uint32_t d;
+        GPIOB->BRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+        GPIOB->BSRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+    }
+
+    SCB->SHCSR |= (1UL << 16)   /* MEMFAULTENA */
+               | (1UL << 17)   /* BUSFAULTENA  */
+               | (1UL << 18);  /* USGFAULTENA  */
+
+    /* LED 闪 2 次: SHCSR 配置完成 */
+    {
+        volatile uint32_t d;
+        for (int i=0; i<2; i++) {
+            GPIOB->BRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+            GPIOB->BSRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+        }
+    }
+
+    Debug_Printf("\r\n[BOOT] System starting... SYSCLK=%lu Hz\r\n", SystemCoreClock);
+
+    /* LED 闪 3 次: 第一条 Debug_Printf 完成 */
+    {
+        volatile uint32_t d;
+        for (int i=0; i<3; i++) {
+            GPIOB->BRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+            GPIOB->BSRR = 0x0040; for (d=0; d<800000; d++) __NOP();
+        }
+    }
+
+    /* ---- 逐项硬件初始化 (带进度日志, 便于定位崩溃点) ---- */
+    Debug_Printf("[INIT] LED_RGB...\r\n");
+    LED_RGB_Init();
+    Debug_Printf("[INIT] LED_RGB OK\r\n");
+
+    Debug_Printf("[INIT] ADC_Common...\r\n");
+    ADC_Common_Init();
+    Debug_Printf("[INIT] ADC_Common OK\r\n");
+
+    Debug_Printf("[INIT] PH_Sensor...\r\n");
+    PH_Sensor_Init();
+    Debug_Printf("[INIT] PH_Sensor OK\r\n");
+
+    Debug_Printf("[INIT] Turbidity_Sensor...\r\n");
+    Turbidity_Sensor_Init();
+    Debug_Printf("[INIT] Turbidity_Sensor OK\r\n");
+
+    Debug_Printf("[INIT] Temp_Sensor...\r\n");
+    Temp_Sensor_Init();
+    Debug_Printf("[INIT] Temp_Sensor OK\r\n");
+
+    Debug_Printf("[INIT] TDS_Sensor...\r\n");
+    TDS_Sensor_Init();
+    Debug_Printf("[INIT] TDS_Sensor OK\r\n");
+
+    Debug_Printf("[INIT] GPS...\r\n");
+    GPS_Init();
+    Debug_Printf("[INIT] GPS OK\r\n");
+
+    Debug_Printf("[INIT] LoRa... (AT scan, may take seconds)\r\n");
+    LoRa_Init();
+    Debug_Printf("[INIT] LoRa OK\r\n");
+
+    Debug_Printf("[INIT] RC522...\r\n");
+    RC522_Init();
+    Debug_Printf("[INIT] RC522 OK\r\n");
 
     /* 启动指示：蓝灯 */
     LED_RGB_SetColor(LED_COLOR_BLUE);
@@ -595,7 +676,7 @@ int main(void)
     ret = xTaskCreate(vSensorTask, "Sensor", 256, NULL, 3, &xSensorTaskHandle);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
-    ret = xTaskCreate(vGPSTask,   "GPS",    256, NULL, 2, NULL);
+    ret = xTaskCreate(vGPSTask,   "GPS",    384, NULL, 2, NULL);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
     ret = xTaskCreate(vIOTTask,   "IoT",    512, NULL, 2, &xIOTTaskHandle);

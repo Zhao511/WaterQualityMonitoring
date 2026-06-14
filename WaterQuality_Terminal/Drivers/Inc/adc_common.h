@@ -7,8 +7,8 @@
 
 #include "stm32f10x.h"
 
-/* ADC 超时保护 (约100ms @72MHz) */
-#define ADC_TIMEOUT_MAX 0xFFFFFF
+/* ADC 超时保护 (~5ms@72MHz, 避免阻塞任务导致 WDG 复位) */
+#define ADC_TIMEOUT_MAX 0xFFFF
 
 /* ADC 参考电压与分辨率 */
 #define ADC_VREF         3.3f

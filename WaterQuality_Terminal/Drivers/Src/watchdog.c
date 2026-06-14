@@ -55,14 +55,11 @@ static const uint32_t hb_priorities[HEARTBEAT_COUNT] = {
 
 /* ================================================================
  * 用于去重: 记录上次告警的任务, 避免重复打印
- * HEARTBEAT_COUNT 表示 "无告警"
  * ================================================================ */
 static HeartbeatTask last_stuck_task = HEARTBEAT_COUNT;
 
 /* ================================================================
  * WDG_Init — 使能 LSI + 配置 IWDG + 启动
- * 注意: 必须在调度器启动前调用 (在 main 中, 创建任务之前)
- *        一旦启动 IWDG, 只能由硬件复位停止
  * ================================================================ */
 void WDG_Init(void)
 {
@@ -71,47 +68,39 @@ void WDG_Init(void)
     /* 1. 使能 LSI (内部低速时钟 ~40kHz) */
     RCC->CSR |= RCC_CSR_LSION;
 
-    /* 2. 等待 LSI 就绪 (带超时保护, 防止硬件故障时死循环) */
+    /* 2. 等待 LSI 就绪 (带超时) */
     timeout = 0;
     while (((RCC->CSR & RCC_CSR_LSIRDY) == 0) && (timeout < 0xFFFF))
-    {
         timeout++;
-    }
 
-    /* 3. 解锁 IWDG 密钥寄存器 — 允许写 PR 和 RLR */
+    /* 3. 解锁 IWDG */
     IWDG->KR = IWDG_KEY_ENABLE_WRITE;
 
-    /* 4. 设置预分频器 = 256 */
+    /* 4. 预分频器 = 256 */
     IWDG->PR = IWDG_PRESCALER_USED;
 
-    /* 5. 设置重装载值 (12-bit, 0~4095) */
+    /* 5. 重装载值 */
     IWDG->RLR = IWDG_RELOAD_VALUE;
 
-    /* 6. 等待寄存器更新完成 (PVU/RVU 标志清零) */
-    while (IWDG->SR != 0)
-    {
-        /* 等待预分频器和重装载寄存器更新完毕 */
-    }
+    /* 6. 等待寄存器更新完成 (带超时) */
+    timeout = 0;
+    while ((IWDG->SR != 0) && (timeout < 0xFFFF))
+        timeout++;
 
-    /* 7. 重装载计数器 (将 RLR 加载到递减计数器) */
+    /* 7. 重装载 + 启动 */
     IWDG->KR = IWDG_KEY_RELOAD;
-
-    /* 8. 启动 IWDG (此操作不可逆! 之后只能由复位停止) */
     IWDG->KR = IWDG_KEY_START;
 
-    /* 9. 初始化所有心跳时间戳 */
+    /* 8. 初始化心跳时间戳 */
     TickType_t now = xTaskGetTickCount();
     for (uint8_t i = 0; i < HEARTBEAT_COUNT; i++)
-    {
         hb_ticks[i] = now;
-    }
 
     last_stuck_task = HEARTBEAT_COUNT;
 }
 
 /* ================================================================
  * WDG_Feed — 重装载 IWDG 计数器
- * 由看门狗监控任务在确认所有任务健康后调用
  * ================================================================ */
 void WDG_Feed(void)
 {
@@ -120,8 +109,6 @@ void WDG_Feed(void)
 
 /* ================================================================
  * WDG_DebugFreeze — 调试暂停时冻结 IWDG
- * 设置 DBGMCU->CR 的 bit8, 当 CPU 被调试器暂停时 IWDG 停止计数
- * 避免调试断点导致意外复位
  * ================================================================ */
 void WDG_DebugFreeze(void)
 {
@@ -130,27 +117,15 @@ void WDG_DebugFreeze(void)
 
 /* ================================================================
  * WDG_Heartbeat — 应用任务上报心跳
- * 每个任务在循环末尾调用, 记录当前系统 tick
  * ================================================================ */
 void WDG_Heartbeat(HeartbeatTask task)
 {
     if (task < HEARTBEAT_COUNT)
-    {
         hb_ticks[task] = xTaskGetTickCount();
-    }
 }
 
 /* ================================================================
- * WDG_CheckAll — 检查所有任务心跳
- *
- * 遍历所有心跳槽位, 若任一任务的 (当前时间 - 最后心跳) >= 超时阈值,
- * 则判定该任务卡死:
- *   - 打印告警信息 (直接使用 Debug_Printf, 不使用互斥量,
- *     因为卡死的任务可能正持有 xDebugMutex)
- *   - 不调用 WDG_Feed(), IWDG 将在 ~4s 后溢出复位
- *   - 去重: 同一任务只打印一次告警
- *
- * 若所有心跳正常, 则调用 WDG_Feed() 喂狗
+ * WDG_CheckAll — 检查所有任务心跳, 全部正常则喂狗
  * ================================================================ */
 void WDG_CheckAll(void)
 {
@@ -158,21 +133,17 @@ void WDG_CheckAll(void)
 
     for (uint8_t i = 0; i < HEARTBEAT_COUNT; i++)
     {
-        TickType_t elapsed = now - hb_ticks[i];
-
-        if (elapsed >= hb_timeouts[i])
+        if ((now - hb_ticks[i]) >= hb_timeouts[i])
         {
-            /* 任务卡死! */
             if (last_stuck_task != (HeartbeatTask)i)
             {
-                /* 去重: 同一任务只打印一次 */
                 Debug_Printf(
                     "\r\n========================================\r\n");
                 Debug_Printf(
                     "[WDG] *** ALERT: Task '%s' STUCK! ***\r\n", hb_names[i]);
                 Debug_Printf(
                     "[WDG] Last heartbeat: %lums ago (timeout: %lums)\r\n",
-                    (unsigned long)(elapsed * portTICK_PERIOD_MS),
+                    (unsigned long)((now - hb_ticks[i]) * portTICK_PERIOD_MS),
                     (unsigned long)(hb_timeouts[i] * portTICK_PERIOD_MS));
                 Debug_Printf(
                     "[WDG] IWDG NOT fed -- system will reset in ~4s\r\n");
@@ -180,15 +151,12 @@ void WDG_CheckAll(void)
                     "========================================\r\n\r\n");
                 last_stuck_task = (HeartbeatTask)i;
             }
-            /* 不喂狗 — IWDG 将溢出复位 */
             return;
         }
     }
 
-    /* 所有任务正常 — 喂狗 */
     if (last_stuck_task != HEARTBEAT_COUNT)
     {
-        /* 之前有任务卡死, 现在恢复了 (不太可能, 但处理这种情况) */
         Debug_Printf("[WDG] All tasks recovered. Resuming feed.\r\n");
         last_stuck_task = HEARTBEAT_COUNT;
     }
@@ -197,7 +165,7 @@ void WDG_CheckAll(void)
 }
 
 /* ================================================================
- * WDG_PrintTaskTable — 打印任务配置表 (启动时调用一次)
+ * WDG_PrintTaskTable — 打印任务配置表
  * ================================================================ */
 void WDG_PrintTaskTable(void)
 {
@@ -223,17 +191,13 @@ void WDG_PrintTaskTable(void)
 }
 
 /* ================================================================
- * WDG_PrintStatus — 打印心跳状态摘要 (看门狗任务周期性调用)
- * 输出格式:
- *   [WDG] Status: Sensor=0.2s GPS=0.0s IoT=0.5s RFID=0.3s LED=0.1s | ALL OK
- * 或异常时:
- *   [WDG] Status: Sensor=0.2s GPS=0.0s IoT=5.1s RFID=0.3s LED=0.1s | *** IoT STUCK! ***
+ * WDG_PrintStatus — 打印心跳状态摘要
  * ================================================================ */
 void WDG_PrintStatus(void)
 {
     TickType_t now = xTaskGetTickCount();
     uint8_t stuck_count = 0;
-    char line[128];
+    static char line[128];
     int pos = 0;
 
     pos += snprintf(line + pos, sizeof(line) - pos,
@@ -254,22 +218,15 @@ void WDG_PrintStatus(void)
     }
 
     if (stuck_count == 0)
-    {
         snprintf(line + pos, sizeof(line) - pos, "| ALL OK");
-    }
     else
-    {
-        /* 找出第一个卡死的任务名 */
         for (uint8_t i = 0; i < HEARTBEAT_COUNT; i++)
-        {
             if ((now - hb_ticks[i]) >= hb_timeouts[i])
             {
                 snprintf(line + pos, sizeof(line) - pos,
                          "| *** %s STUCK! ***", hb_names[i]);
                 break;
             }
-        }
-    }
 
     Debug_Printf("%s\r\n", line);
 }

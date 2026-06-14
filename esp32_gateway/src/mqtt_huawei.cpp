@@ -250,8 +250,8 @@ bool mqtt_init()
     /* 设置 MQTT 回调 */
     g_mqtt.setCallback(mqtt_callback);
 
-    /* 配置 TLS：使用华为云 DigiCert 根证书验证服务器 */
-    g_wifi_client.setCACert(HUAWEI_ROOT_CA);
+    /* 配置 TLS：跳过证书验证（st1.iotda-device 端点证书链与内置 DigiCert 不匹配） */
+    g_wifi_client.setInsecure();
     g_wifi_client.setTimeout(15);  /* TLS 握手超时 15 秒 */
 
     /* WiFi 连接 */

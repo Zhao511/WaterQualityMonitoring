@@ -1,6 +1,21 @@
+; ============================================================
+; 栈空间: 4096 bytes (原 1280 → 增大至 4KB, 为 ISR 嵌套+FreeRTOS 留余量)
+; 堆空间: 512  bytes (新增, 支持 malloc/pvPortMalloc 扩展)
+; ============================================================
+Stack_Size      EQU     0x00001000
+Heap_Size       EQU     0x00000200
+
         AREA    STACK, DATA, READWRITE, ALIGN=3
-        SPACE   0x00000500
+        EXPORT  __initial_sp
+Stack_Mem       SPACE   Stack_Size
 __initial_sp
+
+        AREA    HEAP, DATA, READWRITE, ALIGN=3
+        EXPORT  __heap_base
+        EXPORT  __heap_limit
+__heap_base
+Heap_Mem        SPACE   Heap_Size
+__heap_limit
 
         AREA    RESET, DATA, READONLY
         EXPORT  __Vectors

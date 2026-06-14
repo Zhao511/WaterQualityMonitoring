@@ -7,8 +7,14 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 uint8_t  debug_rx_buffer[DEBUG_BUFFER_SIZE];
 uint16_t debug_rx_index = 0;
+
+/* 静态缓冲区 — 不占用栈空间，配合临界区保护 */
+static char debug_printf_buf[128];
 
 /**
  * @brief  初始化调试串口 (USART1, PA9=TX, PA10=RX, 115200bps)
@@ -70,10 +76,16 @@ void Debug_SendString(char *str)
 
 void Debug_Printf(const char *format, ...)
 {
-    char buffer[128];
     va_list args;
+
+    /*
+     * 使用静态缓冲区替代栈缓冲区，消除每次调用消耗 128 字节栈空间的隐患。
+     * taskENTER_CRITICAL() 防止 ISR 与任务级调用竞争同一缓冲区。
+     */
+    taskENTER_CRITICAL();
     va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
+    vsnprintf(debug_printf_buf, sizeof(debug_printf_buf), format, args);
     va_end(args);
-    Debug_SendString(buffer);
+    Debug_SendString(debug_printf_buf);
+    taskEXIT_CRITICAL();
 }

@@ -3,6 +3,7 @@
 #include "stm32f10x_gpio.h"
 #include "stm32f10x_rcc.h"
 #include "misc.h"
+#include "usart_debug.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -182,6 +183,8 @@ void LoRa_Init(void)
     USART_InitTypeDef USART_InitStructure;
     NVIC_InitTypeDef  NVIC_InitStructure;
 
+    Debug_Printf("[LoRa] Init start\r\n");
+
     /* ---- 时钟使能 ---- */
     RCC_APB1PeriphClockCmd(LORA_USART_RCC, ENABLE);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | LORA_MD0_RCC | LORA_AUX_RCC, ENABLE);
@@ -232,6 +235,7 @@ void LoRa_Init(void)
     RingBuffer_Init(&lora_rb);
 
     /* 等待模块上电稳定 */
+    Debug_Printf("[LoRa] GPIO+USART3 ready, waiting module power-on...\r\n");
     Lora_DelayMs(300);
 
     /* ================================================================
@@ -252,6 +256,7 @@ void LoRa_Init(void)
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
     /* 扫描波特率 */
+    Debug_Printf("[LoRa] Scanning baud rate...\r\n");
     for (size_t i = 0; i < baud_count; i++)
     {
         LoRa_USART_SetBaud(baud_list[i]);
@@ -259,6 +264,7 @@ void LoRa_Init(void)
         if (LoRa_SendAT("AT\r\n", at_resp, sizeof(at_resp)) == 0)
         {
             current_baud = baud_list[i];
+            Debug_Printf("[LoRa] Found baud: %lu\r\n", current_baud);
             break;
         }
     }
@@ -266,6 +272,7 @@ void LoRa_Init(void)
     /* 如果找到的波特率不是目标波特率, 发送 AT+BAUD 切换 */
     if (current_baud != 0 && current_baud != LORA_BAUD_RATE)
     {
+        Debug_Printf("[LoRa] Switching baud %lu -> %lu\r\n", current_baud, (uint32_t)LORA_BAUD_RATE);
         char at_cmd[20];
         snprintf(at_cmd, sizeof(at_cmd), "AT+BAUD=%d\r\n", LORA_BAUD_RATE);
         LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
@@ -275,6 +282,7 @@ void LoRa_Init(void)
     else if (current_baud == 0)
     {
         /* 所有波特率都失败, 回退到 LORA_BAUD_RATE 继续 (模块可能异常) */
+        Debug_Printf("[LoRa] WARN: no baud found, fallback to %lu\r\n", (uint32_t)LORA_BAUD_RATE);
         LoRa_USART_SetBaud(LORA_BAUD_RATE);
         Lora_DelayMs(100);
     }
@@ -313,15 +321,19 @@ void LoRa_Init(void)
 
         /* 查询确认 */
         LoRa_SendAT("AT+ADDR?\r\n", at_resp, sizeof(at_resp));
+        Debug_Printf("[LoRa] ADDR? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
         LoRa_SendAT("AT+CH?\r\n", at_resp, sizeof(at_resp));
+        Debug_Printf("[LoRa] CH? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
 
         /* 显式配置空中速率, 确保两端一致 (默认 2.4kbps)
          * ATK-LORA-01: AT+RATE=<0~5> (2=2.4kbps)
          * E220 兼容: AT+PARAM=<SF>,<BW>,<CR>,<preamble> (9=SF9,7=125kHz,1=4/5,8=前导8) */
+        Debug_Printf("[LoRa] Config air rate...\r\n");
         if (LoRa_SendAT("AT+RATE=2\r\n", at_resp, sizeof(at_resp)) != 0) {
             LoRa_SendAT("AT+PARAM=9,7,1,8\r\n", at_resp, sizeof(at_resp));
         }
         LoRa_SendAT("AT+RATE?\r\n", at_resp, sizeof(at_resp));
+        Debug_Printf("[LoRa] RATE? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
     }
 
     /* ================================================================
@@ -330,6 +342,7 @@ void LoRa_Init(void)
     LoRa_SetMode(0);
     Lora_DelayMs(50);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
+    Debug_Printf("[LoRa] Init done, transparent mode\r\n");
 }
 
 /**

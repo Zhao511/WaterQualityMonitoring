@@ -85,11 +85,13 @@ uint8_t GPS_ValidateChecksum(const char *nmea)
 
 uint8_t GPS_ParseNMEA(const char *nmea, GPS_Data *data)
 {
+    /* static buffer — avoids 128 bytes on stack per call (called from GPS_ProcessData) */
+    static char sentence[128];
+
     if (strstr(nmea, "$GPGGA") != NULL)
     {
         if (!GPS_ValidateChecksum(nmea)) return 0;
 
-        char sentence[128];
         strncpy(sentence, nmea, sizeof(sentence) - 1);
         sentence[sizeof(sentence) - 1] = '\0';
 
@@ -131,7 +133,7 @@ uint8_t GPS_ParseNMEA(const char *nmea, GPS_Data *data)
     {
         if (!GPS_ValidateChecksum(nmea)) return 0;
 
-        char sentence[128];
+        /* reuse the static sentence[] buffer declared above */
         strncpy(sentence, nmea, sizeof(sentence) - 1);
         sentence[sizeof(sentence) - 1] = '\0';
 
@@ -164,7 +166,7 @@ void GPS_ProcessData(void)
 
         if (nmea_len < 127)
         {
-            char nmea_copy[128];
+            static char nmea_copy[128];
             memcpy(nmea_copy, start, nmea_len);
             nmea_copy[nmea_len] = '\0';
             GPS_ParseNMEA(nmea_copy, &gps_data);

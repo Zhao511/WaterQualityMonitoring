@@ -12,7 +12,7 @@
 /* ================================================================
  * WiFi 配置
  * ================================================================ */
-#define WIFI_SSID       "zyq"
+#define WIFI_SSID       "vivo Y78+"
 #define WIFI_PASSWORD   "88888888"
 #define WIFI_TIMEOUT_MS 20000       /* WiFi 连接超时 (ms) */
 #define WIFI_RETRY_MAX  5            /* 最大重试次数 */
