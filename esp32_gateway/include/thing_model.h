@@ -95,7 +95,6 @@ struct WaterStatus {
     float  tds;
     float  ph;
     float  temp;
-    float  turbidity;
     String rfid;
     String gps;
 
@@ -104,7 +103,6 @@ struct WaterStatus {
         data["tds"]       = tds;
         data["pH"]        = ph;
         data["temp"]      = temp;
-        data["turbidity"] = turbidity;
         data["rfid"]      = rfid;
         data["gps"]       = gps;
 

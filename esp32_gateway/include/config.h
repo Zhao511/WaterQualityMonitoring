@@ -12,24 +12,24 @@
 /* ================================================================
  * WiFi 配置
  * ================================================================ */
-#define WIFI_SSID       "YOUR_WIFI_SSID"      /* TODO: 修改为实际 WiFi */
-#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"   /* TODO: 修改为实际密码 */
+#define WIFI_SSID       "zyq"
+#define WIFI_PASSWORD   "88888888"
 #define WIFI_TIMEOUT_MS 20000       /* WiFi 连接超时 (ms) */
 #define WIFI_RETRY_MAX  5            /* 最大重试次数 */
 
 /* ================================================================
  * 华为云 IoT 设备身份 (从华为云控制台获取)
  * ================================================================ */
-#define HUAWEI_DEVICE_ID    "YOUR_DEVICE_ID"       /* TODO: 华为云设备ID */
-#define HUAWEI_PRODUCT_ID   "YOUR_PRODUCT_ID"       /* TODO: 华为云产品ID */
-#define HUAWEI_DEVICE_SECRET "YOUR_DEVICE_SECRET"    /* TODO: 华为云设备密钥 */
+#define HUAWEI_DEVICE_ID    "6a09b565c00ccb6d4b54d008_test05"
+#define HUAWEI_PRODUCT_ID   "b547d1085e7a4eadb3a4249a56863a10"
+#define HUAWEI_DEVICE_SECRET "15badb40a108186622d55ae888ffc142"
 
 /* 华为云 IoT MQTT 接入点 (根据你注册的区域选择)
  * 华南-广州: iot-mqtts.cn-north-4.myhuaweicloud.com
  * 华北-北京: iot-mqtts.cn-north-1.myhuaweicloud.com
  * 华东-上海: iot-mqtts.cn-east-3.myhuaweicloud.com
  */
-#define HUAWEI_MQTT_HOST    "YOUR_INSTANCE_ID.st1.iotda-device.cn-south-1.myhuaweicloud.com"  /* TODO */
+#define HUAWEI_MQTT_HOST    "7eb1a1f981.st1.iotda-device.cn-south-1.myhuaweicloud.com"
 #define HUAWEI_MQTT_PORT    8883         /* TLS: 8883 */
 
 /* MQTT 心跳 */
@@ -40,7 +40,7 @@
  * LoRa 模块 (正点原子 ATK-LORA-01) — 与 STM32 侧配对
  * ================================================================ */
 #define LORA_SERIAL         Serial2     /* UART2 */
-#define LORA_BAUD_RATE      9600        /* 与 STM32 侧一致 */
+#define LORA_BAUD_RATE      115200      /* 与 STM32 侧一致 */
 #define LORA_RX_PIN         26          /* GPIO26 ← 模块 TXD */
 #define LORA_TX_PIN         25          /* GPIO25 → 模块 RXD */
 #define LORA_AUX_PIN        35          /* GPIO35 ← 模块 AUX (仅输入, 状态指示) */

@@ -59,6 +59,19 @@ static struct {
     char   fence_id[16];
 } g_geo_fence;
 
+/* 告警模式管理 */
+typedef enum {
+    ALARM_MODE_AUTO   = 0,  /* 自动: 阈值超限自动产生告警 */
+    ALARM_MODE_MANUAL = 1   /* 手动: 暂停自动告警生成 */
+} AlarmMode;
+
+static AlarmMode   g_alarm_mode      = ALARM_MODE_AUTO;
+static uint32_t    g_alarm_mute_until_tick = 0;  /* 静音截止 tick */
+
+/* 最近一条告警记录 (用于 clear 操作) */
+static Alarm       g_last_alarm;
+static bool        g_last_alarm_valid = false;
+
 /* ================================================================
  * 时间戳
  * ================================================================ */
@@ -97,8 +110,23 @@ void IOT_DeviceStatus_Update(DeviceStatus *s)
 
 int8_t IOT_Get_LoRa_RSSI(void)
 {
-    /* E220 不支持 AT+RSSI, 返回固定值 -55dBm (中等信号) */
-    return -55;
+    /* 尝试通过 AT 指令读取 RSSI, 兼容不同模块固件 */
+    char resp[32];
+    int rssi = -55;  /* 默认值: 中等信号 */
+
+    if (LoRa_SendATCmd("AT+RSSI?", resp, sizeof(resp)) == 0) {
+        /* 解析响应: 期望格式 "RSSI: -XX" 或直接数字 */
+        char *p = strstr(resp, "RSSI");
+        if (p) {
+            p = strchr(p, ':');
+            if (p) rssi = (int)strtol(p + 1, NULL, 10);
+        } else {
+            rssi = (int)strtol(resp, NULL, 10);
+        }
+        if (rssi > 0) rssi = -rssi;  /* 纠正正数符号 */
+    }
+
+    return (int8_t)rssi;
 }
 
 /* ================================================================
@@ -108,12 +136,34 @@ int8_t IOT_Get_LoRa_RSSI(void)
 void IOT_Alarm_Init(void)
 {
     g_alarm_seq = 0;
+    g_alarm_mode = ALARM_MODE_AUTO;
+    g_alarm_mute_until_tick = 0;
+    g_last_alarm_valid = false;
 }
 
 int IOT_Alarm_Check(const WaterStatus *ws, const char *rfid,
                     Alarm *alarm_out)
 {
     if (!ws || !alarm_out) return 0;
+
+    /* 手动模式下暂停自动告警生成 */
+    if (g_alarm_mode == ALARM_MODE_MANUAL)
+        return 0;
+
+    /* 检查全局静音状态 (按类型位掩码过滤) */
+    if (g_alarm_mute_until_tick > 0) {
+        if (xTaskGetTickCount() < g_alarm_mute_until_tick)
+            return 0;  /* 仍在静音期内, 跳过所有告警 */
+        else
+            g_alarm_mute_until_tick = 0;  /* 静音期已过, 自动恢复 */
+    }
+
+    /* 辅助宏: 保存告警并返回 */
+    #define SAVE_ALARM_AND_RETURN(ret_val) do { \
+        g_last_alarm = *alarm_out; \
+        g_last_alarm_valid = true; \
+        return (ret_val); \
+    } while(0)
 
     uint8_t fail_count = 0;
     float   worst_val  = 0;
@@ -151,7 +201,7 @@ int IOT_Alarm_Check(const WaterStatus *ws, const char *rfid,
                                  : ALARM_LEVEL_NORMAL;
         alarm_out->status        = ALARM_STATUS_UNHANDLED;
         make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
-        return 1;
+        SAVE_ALARM_AND_RETURN(1);
     }
 
     /* 电池低电告警 */
@@ -161,12 +211,14 @@ int IOT_Alarm_Check(const WaterStatus *ws, const char *rfid,
         snprintf(alarm_out->alarm_id, IOT_ALARM_ID_LEN,
                  "ALM_%04lu", (unsigned long)g_alarm_seq);
         alarm_out->alarm_type    = ALARM_TYPE_BATTERY;
+        memcpy(alarm_out->device_id, IOT_DEVICE_ID_DEFAULT, IOT_DEVICE_ID_MAX - 1);
+        memcpy(alarm_out->rfid, rfid ? rfid : "", IOT_RFID_LEN - 1);
         alarm_out->current_value = g_device_status.battery;
         alarm_out->threshold     = IOT_BATTERY_LOW_THRESHOLD;
         alarm_out->alarm_level   = ALARM_LEVEL_SERIOUS;
         alarm_out->status        = ALARM_STATUS_UNHANDLED;
         make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
-        return 2;
+        SAVE_ALARM_AND_RETURN(2);
     }
 
     /* 信号弱告警 */
@@ -177,15 +229,18 @@ int IOT_Alarm_Check(const WaterStatus *ws, const char *rfid,
         snprintf(alarm_out->alarm_id, IOT_ALARM_ID_LEN,
                  "ALM_%04lu", (unsigned long)g_alarm_seq);
         alarm_out->alarm_type    = ALARM_TYPE_SIGNAL;
+        memcpy(alarm_out->device_id, IOT_DEVICE_ID_DEFAULT, IOT_DEVICE_ID_MAX - 1);
+        memcpy(alarm_out->rfid, rfid ? rfid : "", IOT_RFID_LEN - 1);
         alarm_out->current_value = g_device_status.signal;
         alarm_out->threshold     = IOT_SIGNAL_WEAK_THRESHOLD;
         alarm_out->alarm_level   = ALARM_LEVEL_NORMAL;
         alarm_out->status        = ALARM_STATUS_UNHANDLED;
         make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
-        return 3;
+        SAVE_ALARM_AND_RETURN(3);
     }
 
     return 0;
+    #undef SAVE_ALARM_AND_RETURN
 }
 
 /* ================================================================
@@ -282,6 +337,41 @@ void IOT_GPS_GetDecimal(GPS *gps_out)
 }
 
 /* ================================================================
+ * 电子围栏检查 — 基于 Haversine 公式计算距离
+ * ================================================================ */
+#include <math.h>
+
+#define EARTH_RADIUS_M  6371000.0f
+
+static float to_rad(float deg) { return deg * 3.14159265359f / 180.0f; }
+
+static float haversine_distance(float lat1, float lon1, float lat2, float lon2)
+{
+    float dlat = to_rad(lat2 - lat1);
+    float dlon = to_rad(lon2 - lon1);
+    float a = sinf(dlat / 2.0f) * sinf(dlat / 2.0f) +
+              cosf(to_rad(lat1)) * cosf(to_rad(lat2)) *
+              sinf(dlon / 2.0f) * sinf(dlon / 2.0f);
+    float c = 2.0f * atan2f(sqrtf(a), sqrtf(1.0f - a));
+    return EARTH_RADIUS_M * c;
+}
+
+int IOT_GeoFence_Check(float lat, float lon)
+{
+    if (!g_geo_fence.enable) return 0;
+
+    float dist = haversine_distance(lat, lon,
+                                     g_geo_fence.center_lat,
+                                     g_geo_fence.center_lon);
+    if (dist > g_geo_fence.radius) {
+        Debug_Printf("IOT: GeoFence breached! dist=%.0fm > radius=%.0fm\r\n",
+                     dist, g_geo_fence.radius);
+        return 1;  /* 越界 */
+    }
+    return 0;
+}
+
+/* ================================================================
  * 命令分发器 — 12 条感知层命令
  * 告警模式管理 (set_alarm_mode / mute_alarm / clear_alarm) 由应用层负责
  * ================================================================ */
@@ -326,8 +416,43 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
             iot_json_get_int(params, "frequency", &freq);
             iot_json_get_int(params, "spreading_factor", &sf);
             iot_json_get_int(params, "power", &power);
-            Debug_Printf("IOT: LoRa params freq=%d sf=%d power=%d (stub)\r\n", freq, sf, power);
-            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+
+            char at_cmd[32], at_resp[32];
+            bool all_ok = true;
+
+            /* 频率: 尝试 AT+FREQ 和 AT+CHANNEL */
+            if (freq > 0) {
+                snprintf(at_cmd, sizeof(at_cmd), "AT+FREQ=%d", freq);
+                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
+                    snprintf(at_cmd, sizeof(at_cmd), "AT+CH=%d", freq);
+                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
+                        all_ok = false;
+                }
+            }
+
+            /* 扩频因子 */
+            if (sf > 0 && all_ok) {
+                snprintf(at_cmd, sizeof(at_cmd), "AT+SF=%d", sf);
+                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
+                    snprintf(at_cmd, sizeof(at_cmd), "AT+RATE=%d", sf);
+                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
+                        all_ok = false;
+                }
+            }
+
+            /* 发射功率 */
+            if (power > 0 && all_ok) {
+                snprintf(at_cmd, sizeof(at_cmd), "AT+POWER=%d", power);
+                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
+                    snprintf(at_cmd, sizeof(at_cmd), "AT+TXPOWER=%d", power);
+                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
+                        all_ok = false;
+                }
+            }
+
+            Debug_Printf("IOT: LoRa params freq=%d sf=%d power=%d -- %s\r\n",
+                         freq, sf, power, all_ok ? "OK" : "partial fail");
+            iot_json_serialize_response(cmd, all_ok, all_ok ? "ok" : "at cmd failed", rsp_buf, max_len);
             return true;
         }
     }
@@ -339,6 +464,11 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
             int buffer_time = 0;
             iot_json_get_str(params, "mode", mode_str, sizeof(mode_str));
             iot_json_get_int(params, "buffer_time", &buffer_time);
+            if (strcmp(mode_str, "manual") == 0) {
+                g_alarm_mode = ALARM_MODE_MANUAL;
+            } else {
+                g_alarm_mode = ALARM_MODE_AUTO;
+            }
             Debug_Printf("IOT: Alarm mode = %s, buffer=%ds\r\n", mode_str, buffer_time);
             iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
             return true;
@@ -346,6 +476,14 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
         if (strcmp(cmd, "clear_alarm") == 0) {
             char alarm_id[IOT_ALARM_ID_LEN] = {0};
             iot_json_get_str(params, "alarm_id", alarm_id, sizeof(alarm_id));
+            /* 清除最近一条告警 (或指定 alarm_id 的告警) */
+            if (g_last_alarm_valid) {
+                if (alarm_id[0] == '\0' ||
+                    strcmp(alarm_id, g_last_alarm.alarm_id) == 0) {
+                    g_last_alarm.status = ALARM_STATUS_CLEARED;
+                    g_last_alarm_valid = false;
+                }
+            }
             Debug_Printf("IOT: Clear alarm %s\r\n", alarm_id[0] ? alarm_id : "(all)");
             iot_json_serialize_response(cmd, true, "cleared", rsp_buf, max_len);
             return true;
@@ -355,6 +493,10 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
             char types[64] = {0};
             iot_json_get_int(params, "duration", &duration);
             iot_json_get_str(params, "types", types, sizeof(types));
+            if (duration > 0) {
+                g_alarm_mute_until_tick = xTaskGetTickCount()
+                    + (uint32_t)duration * configTICK_RATE_HZ;
+            }
             Debug_Printf("IOT: Mute alarm duration=%ds types=%s\r\n", duration, types);
             iot_json_serialize_response(cmd, true, "muted", rsp_buf, max_len);
             return true;
@@ -474,18 +616,34 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
                 cmd, g_geo_fence.fence_id);
             return true;
         }
+    }
 
-        if (strcmp(cmd, "sync_time") == 0) {
-            char source[16] = {0}, manual_time[32] = {0};
-            iot_json_get_str(params, "source", source, sizeof(source));
-            iot_json_get_str(params, "manual_time", manual_time, sizeof(manual_time));
-            /* 注: STM32 无 RTC, 暂用运行时间戳; manual_time 可用于计算偏移 */
-            g_sync_time_base = 0;
-            g_sync_tick_base = xTaskGetTickCount();
-            Debug_Printf("IOT: Time sync source=%s manual=%s\r\n", source, manual_time);
-            iot_json_serialize_response(cmd, true, "synced", rsp_buf, max_len);
-            return true;
+    /* ---- 跨服务命令 (不绑定特定 service_id) ---- */
+    if (strcmp(cmd, "sync_time") == 0) {
+        char source[16] = {0}, manual_time[32] = {0};
+        iot_json_get_str(params, "source", source, sizeof(source));
+        iot_json_get_str(params, "manual_time", manual_time, sizeof(manual_time));
+
+        g_sync_tick_base = xTaskGetTickCount();
+
+        /* 解析 manual_time: 支持 "HH:MM:SS" 格式和纯数字 Unix 时间戳 */
+        if (manual_time[0] != '\0') {
+            int hh = 0, mm = 0, ss = 0;
+            if (sscanf(manual_time, "%d:%d:%d", &hh, &mm, &ss) == 3) {
+                g_sync_time_base = (uint32_t)(hh * 3600 + mm * 60 + ss);
+            } else {
+                /* 尝试作为 Unix 时间戳解析, 转换为当日秒数 (UTC) */
+                long ts = atol(manual_time);
+                if (ts > 0) {
+                    g_sync_time_base = (uint32_t)(ts % 86400);
+                }
+            }
         }
+
+        Debug_Printf("IOT: Time sync source=%s manual=%s base=%lu\r\n",
+                     source, manual_time, (unsigned long)g_sync_time_base);
+        iot_json_serialize_response(cmd, true, "synced", rsp_buf, max_len);
+        return true;
     }
 
     /* 未匹配 */

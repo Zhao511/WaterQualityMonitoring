@@ -128,21 +128,41 @@ static bool wifi_connect()
     DEBUG_SERIAL.print("[WiFi] IP: ");
     DEBUG_SERIAL.println(WiFi.localIP());
 
-    /* WiFi 连上后同步 UTC 时间 (NTP, MQTT 认证需要 UTC 时间戳) */
-    configTime(0, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn");
-    DEBUG_SERIAL.println("[NTP] Time syncing...");
+    /* WiFi 连上后同步 UTC 时间 (NTP, MQTT 认证需要 UTC 时间戳)
+     * 多轮重试, 每轮切换不同 NTP 服务器池 */
+    static const char* ntp_pools[] = {
+        "ntp.aliyun.com", "ntp.ntsc.ac.cn",
+        "pool.ntp.org", "time.google.com",
+        "cn.pool.ntp.org"
+    };
+    const int ntp_pool_count = sizeof(ntp_pools) / sizeof(ntp_pools[0]);
+
     time_t now;
-    for (int i = 0; i < 20; i++) {
-        time(&now);
-        if (now > 1000000000) {  /* 2020 年以后 */
-            DEBUG_SERIAL.print("[NTP] OK: ");
-            DEBUG_SERIAL.println(ctime(&now));
-            return true;
+    bool synced = false;
+    for (int round = 0; round < 3 && !synced; round++)
+    {
+        const char *srv0 = ntp_pools[(round * 2) % ntp_pool_count];
+        const char *srv1 = ntp_pools[(round * 2 + 1) % ntp_pool_count];
+        DEBUG_SERIAL.printf("[NTP] Round %d: %s, %s\n", round + 1, srv0, srv1);
+        configTime(0, 0, srv0, srv1);
+
+        for (int i = 0; i < 10; i++) {
+            time(&now);
+            if (now > 1000000000) {  /* 2020 年以后 */
+                synced = true;
+                break;
+            }
+            delay(1000);
         }
-        delay(1000);
     }
-    DEBUG_SERIAL.println("[NTP] WARN: Time sync failed, using default");
-    return true;  /* 连上 WiFi 就算成功 */
+
+    if (synced) {
+        DEBUG_SERIAL.print("[NTP] OK: ");
+        DEBUG_SERIAL.println(ctime(&now));
+    } else {
+        DEBUG_SERIAL.println("[NTP] WARN: All servers failed, MQTT auth may fail!");
+    }
+    return true;  /* 连上 WiFi 就算成功, MQTT 层有重试机制 */
 }
 
 /* ================================================================
@@ -230,8 +250,8 @@ bool mqtt_init()
     /* 设置 MQTT 回调 */
     g_mqtt.setCallback(mqtt_callback);
 
-    /* 配置 TLS：先跳过证书验证确认连通，之后替换为正确的根证书 */
-    g_wifi_client.setInsecure();
+    /* 配置 TLS：使用华为云 DigiCert 根证书验证服务器 */
+    g_wifi_client.setCACert(HUAWEI_ROOT_CA);
     g_wifi_client.setTimeout(15);  /* TLS 握手超时 15 秒 */
 
     /* WiFi 连接 */

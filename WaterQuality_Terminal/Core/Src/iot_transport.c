@@ -43,6 +43,14 @@ void IOT_Process_Incoming(void)
     rx_buf[len] = '\0';
     Debug_Printf("IOT RX: %s\r\n", (char *)rx_buf);
 
+    /* 检查是否是 LoRa 链路 ping 探测, 直接回复 pong */
+    if (strstr((const char *)rx_buf, "\"ping\"") != NULL)
+    {
+        IOT_Report_Property(
+            "{\"rsp\":\"ping\",\"result\":true,\"msg\":\"pong\"}");
+        return;
+    }
+
     /* 解析命令 */
     char svc[IOT_CMD_NAME_MAX]    = {0};
     char cmd[IOT_CMD_NAME_MAX]    = {0};

@@ -75,6 +75,14 @@ float IOT_GPS_NMEA2Decimal(const char *nmea, char hem);
 void  IOT_GPS_GetDecimal(GPS *gps_out);
 
 /* ================================================================
+ * 电子围栏检查
+ * @param  lat  当前纬度 (decimal degrees)
+ * @param  lon  当前经度 (decimal degrees)
+ * @return 0=围栏内, 1=越界
+ */
+int   IOT_GeoFence_Check(float lat, float lon);
+
+/* ================================================================
  * 命令分发器 (12 条感知层命令，告警模式管理由应用层负责)
  * @param  svc        服务名 ("DeviceStatus"/"Alarm"/"Water_status"/"gps")
  * @param  cmd        命令名

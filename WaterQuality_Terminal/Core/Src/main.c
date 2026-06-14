@@ -86,6 +86,7 @@ static QueueHandle_t xLEDQueue     = NULL;
 static QueueHandle_t xAlarmQueue   = NULL;   /* 告警事件队列 */
 static SemaphoreHandle_t xDebugMutex = NULL;
 static SemaphoreHandle_t xWaterMutex = NULL;  /* 保护 g_water_status 并发访问 */
+static SemaphoreHandle_t xGPSMutex   = NULL;  /* 保护 g_gps_data 并发访问 */
 static TaskHandle_t xWatchdogTaskHandle = NULL;
 
 /* 任务运行计数器 (周期性日志输出, 避免刷屏) */
@@ -242,8 +243,12 @@ static void vGPSTask(void *pvParameters)
         {
             xQueueOverwrite(xGPSQueue, &raw_gps);
 
-            /* 转换为物模型 GPS (decimal degrees) */
-            IOT_GPS_GetDecimal(&g_gps_data);
+            /* 转换为物模型 GPS (decimal degrees), 加锁保护 */
+            if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+            {
+                IOT_GPS_GetDecimal(&g_gps_data);
+                xSemaphoreGive(xGPSMutex);
+            }
 
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
             {
@@ -251,6 +256,25 @@ static void vGPSTask(void *pvParameters)
                              g_gps_data.latitude, g_gps_data.longitude,
                              raw_gps.fix, raw_gps.satellites);
                 xSemaphoreGive(xDebugMutex);
+            }
+
+            /* 电子围栏检查 (每 25 轮 ≈ 5s 检查一次, 避免频繁告警) */
+            if ((g_gps_cycle % 25) == 0) {
+                if (IOT_GeoFence_Check(g_gps_data.latitude, g_gps_data.longitude) != 0) {
+                    Alarm fence_alarm;
+                    memset(&fence_alarm, 0, sizeof(fence_alarm));
+                    /* 使用静态序号避免与 IOT_Alarm_Check 冲突 */
+                    snprintf(fence_alarm.alarm_id, IOT_ALARM_ID_LEN, "ALM_FENCE");
+                    fence_alarm.alarm_type    = ALARM_TYPE_GPS;
+                    memcpy(fence_alarm.device_id, IOT_DEVICE_ID_DEFAULT, IOT_DEVICE_ID_MAX - 1);
+                    memcpy(fence_alarm.rfid, g_water_status.rfid, IOT_RFID_LEN - 1);
+                    fence_alarm.current_value = g_gps_data.latitude;  /* 位置数据 */
+                    fence_alarm.threshold     = g_gps_data.longitude;
+                    fence_alarm.alarm_level   = ALARM_LEVEL_SERIOUS;
+                    fence_alarm.status        = ALARM_STATUS_UNHANDLED;
+                    /* alarm_time 由 IOT_Report_Alarm 调用方填充, 此处用当前时间戳 */
+                    xQueueSend(xAlarmQueue, &fence_alarm, 0);
+                }
             }
         }
 
@@ -348,9 +372,16 @@ static void vIOTTask(void *pvParameters)
         {
             if (notify & IOT_IMMEDIATE_REPORT_BIT)
             {
-                /* request_immediate_report: 全量采集 + 立即上报 */
+                /* request_immediate_report: 全量采集 + 立即上报所有服务 */
                 IOT_Collect_All_Sensors(&g_water_status);
                 IOT_Report_WaterStatus(&g_water_status);
+                IOT_DeviceStatus_Update(&g_device_status);
+                IOT_Report_DeviceStatus(&g_device_status);
+                if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                {
+                    IOT_Report_GPS(&g_gps_data);
+                    xSemaphoreGive(xGPSMutex);
+                }
             }
         }
 
@@ -362,11 +393,15 @@ static void vIOTTask(void *pvParameters)
         /* --- 定时: Water_status 上报 (可调间隔, 默认 5s) --- */
         if ((tick_count % g_report_interval_sec) == 0)
         {
-            /* 更新 GPS 文本 (点位地理位置) */
+            /* 更新 GPS 文本 (点位地理位置), 加锁保护 */
             if (xSemaphoreTake(xWaterMutex, pdMS_TO_TICKS(50)) == pdPASS)
             {
-                snprintf(g_water_status.gps, IOT_GPS_STR_LEN,
-                         "%.6f,%.6f", g_gps_data.longitude, g_gps_data.latitude);
+                if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                {
+                    snprintf(g_water_status.gps, IOT_GPS_STR_LEN,
+                             "%.6f,%.6f", g_gps_data.longitude, g_gps_data.latitude);
+                    xSemaphoreGive(xGPSMutex);
+                }
                 IOT_Report_WaterStatus(&g_water_status);
                 xSemaphoreGive(xWaterMutex);
             }
@@ -383,7 +418,11 @@ static void vIOTTask(void *pvParameters)
         /* --- 定时: GPS 上报 (30s) --- */
         if (tick_count - last_gps_report >= IOT_GPS_REPORT_INTERVAL)
         {
-            IOT_Report_GPS(&g_gps_data);
+            if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+            {
+                IOT_Report_GPS(&g_gps_data);
+                xSemaphoreGive(xGPSMutex);
+            }
             last_gps_report = tick_count;
         }
 
@@ -529,11 +568,13 @@ int main(void)
     xAlarmQueue  = xQueueCreate(4, sizeof(Alarm));     /* 告警缓冲 */
     xDebugMutex  = xSemaphoreCreateMutex();
     xWaterMutex  = xSemaphoreCreateMutex();            /* 保护 g_water_status */
+    xGPSMutex    = xSemaphoreCreateMutex();            /* 保护 g_gps_data      */
 
     /* 验证内核对象 */
     if (xSensorQueue == NULL || xGPSQueue    == NULL ||
         xRFIDQueue   == NULL || xLEDQueue    == NULL ||
-        xAlarmQueue  == NULL || xDebugMutex  == NULL || xWaterMutex == NULL)
+        xAlarmQueue  == NULL || xDebugMutex  == NULL || xWaterMutex == NULL ||
+        xGPSMutex    == NULL)
     {
         LED_RGB_SetColor(LED_COLOR_RED);
         Debug_Printf("FATAL: Failed to create RTOS objects!\r\n");

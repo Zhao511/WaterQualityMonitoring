@@ -16,6 +16,24 @@
 #define LORA_RX_PORT      GPIOB
 #define LORA_USART_IRQn   USART3_IRQn
 
+/* MD0: 模式控制 (PA8) — HIGH=配置模式, LOW=透传模式 */
+#define LORA_MD0_PIN      GPIO_Pin_8
+#define LORA_MD0_PORT     GPIOA
+#define LORA_MD0_RCC      RCC_APB2Periph_GPIOA
+
+/* AUX: 模块忙指示 (PB12) — LOW=忙, HIGH=空闲 */
+#define LORA_AUX_PIN      GPIO_Pin_12
+#define LORA_AUX_PORT     GPIOB
+#define LORA_AUX_RCC      RCC_APB2Periph_GPIOB
+
+/* 默认 LoRa 参数 (与 ESP32 侧一致) */
+#define LORA_BAUD_RATE         115200
+#define LORA_DEFAULT_ADDRESS   0
+#define LORA_DEFAULT_CHANNEL   0      /* 433MHz (ATK-LORA-01 默认) */
+
+/* AUX 超时 (ms) — 等待模块就绪的最长时间 */
+#define LORA_AUX_TIMEOUT_MS    500
+
 /* ========== 缓冲区 ========== */
 #define LORA_BUFFER_SIZE  256
 #define LORA_DATA_SIZE    256   /* 与 LORA_BUFFER_SIZE 一致, 容纳 200+ 字节 JSON */
@@ -41,6 +59,10 @@ void     LoRa_SendData(uint8_t *data, uint16_t length);
 uint16_t LoRa_ReceiveData(uint8_t *buffer, uint16_t max_length);
 void     LoRa_SetAddress(uint8_t address);
 void     LoRa_SetChannel(uint8_t channel);
+void     LoRa_SetMode(uint8_t mode);      /* 0=透传, 1=配置 */
+uint8_t  LoRa_AuxReady(void);            /* 检查 AUX 是否就绪 */
+void     LoRa_WaitAux(uint32_t timeout_ms);
+int      LoRa_SendATCmd(const char *cmd, char *resp, uint16_t resp_max);  /* 发送 AT 指令 (自动切换模式) */
 
 /* 环形缓冲区操作 */
 void     RingBuffer_Init(RingBuffer *rb);

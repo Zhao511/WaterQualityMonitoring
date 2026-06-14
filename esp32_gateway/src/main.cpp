@@ -66,6 +66,13 @@ static void on_lora_receive(const String &svc, const String &json)
         /* STM32 响应格式 {"rsp":"cmd","result":true,"msg":"ok","longitude":...,...}
          * → 遍历所有字段转发到华为云 IoTDA 命令响应格式 */
         String cmd_name = svc.substring(9);  /* 去掉 "response:" 前缀 */
+
+        /* 内部链路探测 ping/pong 不上报云平台 */
+        if (cmd_name == "ping") {
+            DEBUG_SERIAL.println("[FWD] LoRa ping pong (internal), skip cloud");
+            return;
+        }
+
         StaticJsonDocument<256> stm32_rsp;
         DeserializationError err = deserializeJson(stm32_rsp, json);
         if (!err) {
@@ -147,7 +154,9 @@ static void on_cloud_command(const String &cmd_json)
  * 可选: 按需上报 ESP32 自身设备状态给云端
  * ================================================================ */
 static uint32_t g_heartbeat_last = 0;
+static uint32_t g_ping_last = 0;
 #define HEARTBEAT_INTERVAL_SEC  120
+#define PING_INTERVAL_SEC        60    /* 60s 无数据则发 ping 探测 STM32 */
 
 static void heartbeat_check()
 {
@@ -155,7 +164,9 @@ static void heartbeat_check()
     if (now - g_heartbeat_last < HEARTBEAT_INTERVAL_SEC * 1000UL) return;
     g_heartbeat_last = now;
 
-    /* 网关自身在线心跳 */
+    /* 网关自身在线心跳
+     * 注: signal 字段在 STM32 侧表示 LoRa RSSI, 网关侧使用 WiFi RSSI
+     *     表示网关自身的网络连接质量 (dBm) */
     DeviceStatus gw;
     gw.online      = true;
     gw.battery     = 100.0f;
@@ -165,6 +176,23 @@ static void heartbeat_check()
     gw.last_report = String(millis() / 1000);
 
     mqtt_report_property(gw.toCloudJson());
+}
+
+/* LoRa 链路探测: 发送 ping 给 STM32, STM32 收到后会回复 */
+static void lora_ping_check()
+{
+    static uint32_t frames_last = 0;  /* 用于对比帧数变化 */
+    uint32_t now = millis();
+    if (now - g_ping_last < PING_INTERVAL_SEC * 1000UL) return;
+    g_ping_last = now;
+
+    /* 如果帧数没有变化, 说明一直没有收到 STM32 数据, 发 ping 探测 */
+    if (lora_frames_count() == frames_last)
+    {
+        DEBUG_SERIAL.println("[PING] Sending LoRa ping to STM32...");
+        lora_send("{\"ping\":1}");
+    }
+    frames_last = lora_frames_count();
 }
 
 /* ================================================================
@@ -193,6 +221,11 @@ void setup()
     mqtt_on_command(on_cloud_command);
 
     DEBUG_SERIAL.println("[SYS] Gateway ready.");
+    DEBUG_SERIAL.println("[SYS] Waiting for STM32 LoRa data...");
+    DEBUG_SERIAL.println("[SYS] If no [LoRa RX] appears within 60s:");
+    DEBUG_SERIAL.println("[SYS]   1. Check STM32 is running (see 'IOT TX:' on STM32 debug UART)");
+    DEBUG_SERIAL.println("[SYS]   2. Check both LoRa modules: address=0, channel=0, baud=115200");
+    DEBUG_SERIAL.println("[SYS]   3. Verify LoRa module wiring (TX→RX, RX→TX, MD0→GND)");
 }
 
 /* ================================================================
@@ -211,4 +244,7 @@ void loop()
 
     /* 可选: 网关心跳上报 */
     heartbeat_check();
+
+    /* LoRa 链路探测: 收不到数据时主动 ping STM32 */
+    lora_ping_check();
 }
