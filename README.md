@@ -141,6 +141,3 @@ node server.js
 | Android | Kotlin, IoTDA SDK V3, Custom GaugeView |
 | 通信 | LoRa 9600-8N1, MQTT/TLS 8883, HMAC-SHA256 |
 
-## License
-
-MIT
