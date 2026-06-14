@@ -1,0 +1,19 @@
+# 华为云 API 密钥（绝对不能上传）
+credentials.csv
+password.csv
+DEVICES-KEY-*.txt
+
+# Node 依赖
+node_modules/
+
+# 运行时缓存数据
+data/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE
+.vscode/
+.idea/

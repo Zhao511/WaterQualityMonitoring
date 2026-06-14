@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F5F6FA">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Device info bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="8dp">
+            <TextView android:id="@+id/device_name" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="选择设备" android:textSize="18sp" android:textStyle="bold" />
+            <TextView android:id="@+id/device_status" android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="离线" android:textSize="14sp" android:paddingHorizontal="12dp" android:paddingVertical="4dp"
+                android:background="#E0E0E0" android:textColor="#999" />
+        </LinearLayout>
+
+        <!-- Gauges row 1 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="220dp"
+            android:orientation="horizontal"
+            android:baselineAligned="false">
+
+            <com.waterquality.app.ui.widgets.GaugeView
+                android:id="@+id/gauge_tds"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+            <com.waterquality.app.ui.widgets.GaugeView
+                android:id="@+id/gauge_ph"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+            <com.waterquality.app.ui.widgets.GaugeView
+                android:id="@+id/gauge_temp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <!-- Device status row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="4dp"
+            style="?android:attr/buttonBarStyle">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="RFID" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/rfid_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="定位" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/gps_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="电量" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/battery_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="4dp"
+            style="?android:attr/buttonBarStyle">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="信号" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/signal_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="供电" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/power_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="工作状态" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/work_state_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Alarm panel -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFF"
+            android:padding="12dp"
+            android:layout_marginTop="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView android:text="水质综合告警" android:textSize="16sp" android:textStyle="bold" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/alarm_status" android:text="告警关闭" android:textSize="14sp" android:textColor="#27AE60" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+                <Button android:id="@+id/btn_manual_alarm" android:text="开启告警" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:backgroundTint="#E74C3C" android:layout_marginEnd="4dp" />
+                <Button android:id="@+id/btn_stop_alarm" android:text="关闭告警" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:backgroundTint="#95A5A6" android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <TextView android:id="@+id/alarm_list" android:text="暂无告警记录" android:textSize="13sp" android:textColor="#999"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:padding="8dp" android:background="#F9F9F9" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

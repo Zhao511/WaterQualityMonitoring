@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="ph_default_range">
+        <item>6.0</item>
+        <item>9.0</item>
+    </array>
+</resources>

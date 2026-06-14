@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<project>
+  <STM32CubeMXVersion>6.9.0</STM32CubeMXVersion>
+  <header>
+    <Date>08/06/2026</Date>
+    <ToolVersion>V6.9.0</ToolVersion>
+    <TargetDevice>STM32F103C8T6</TargetDevice>
+    <TargetDeviceName>STM32F103C8T6</TargetDeviceName>
+    <BoardName>Custom</BoardName>
+    <BoardVersion>1.0</BoardVersion>
+  </header>
+  <CLIDeviceSelection>
+    <Device>STM32F103C8T6</Device>
+    <Package>LQFP48</Package>
+    <RAM>20KB</RAM>
+    <FLASH>64KB</FLASH>
+  </CLIDeviceSelection>
+  <Pinout>
+    <GPIO>
+      <PA0>ADC_IN0 - pH Sensor</PA0>
+      <PA1>ADC_IN1 - EC Sensor</PA1>
+      <PA2>ADC_IN2 - Turbidity Sensor</PA2>
+      <PA3>ADC_IN3 - Temperature Sensor</PA3>
+      <PA9>USART1_TX - GPS</PA9>
+      <PA10>USART1_RX - GPS</PA10>
+      <PA2>USART2_TX - LoRa</PA2>
+      <PA3>USART2_RX - LoRa</PA3>
+      <PB4>SPI2_NSS - RC522_CS</PB4>
+      <PB5>SPI2_RST - RC522_RST</PB5>
+      <PB13>SPI2_SCK - RC522_SCK</PB13>
+      <PB14>SPI2_MISO - RC522_MISO</PB14>
+      <PB15>SPI2_MOSI - RC522_MOSI</PB15>
+      <PB6>LED_RED</PB6>
+      <PB7>LED_GREEN</PB7>
+      <PB8>LED_BLUE</PB8>
+    </GPIO>
+  </Pinout>
+  <Clock>
+    <HSE_Value>8000000</HSE_Value>
+    <SYSCLK>72000000</SYSCLK>
+    <HCLK>72000000</HCLK>
+    <PCLK1>36000000</PCLK1>
+    <PCLK2>72000000</PCLK2>
+    <PLLMUL>9</PLLMUL>
+    <PLLSource>HSE</PLLSource>
+  </Clock>
+  <Peripherals>
+    <ADC>
+      <Mode>Independent</Mode>
+      <ScanMode>DISABLE</ScanMode>
+      <ContinuousMode>DISABLE</ContinuousMode>
+      <DataAlign>Right</DataAlign>
+      <ExternalTrig>None</ExternalTrig>
+    </ADC>
+    <USART1>
+      <Mode>Rx+Tx</Mode>
+      <BaudRate>9600</BaudRate>
+      <WordLength>8 bits</WordLength>
+      <StopBits>1</StopBits>
+      <Parity>None</Parity>
+      <HardwareFlowControl>None</HardwareFlowControl>
+      <Interrupt>Enable</Interrupt>
+    </USART1>
+    <USART2>
+      <Mode>Rx+Tx</Mode>
+      <BaudRate>9600</BaudRate>
+      <WordLength>8 bits</WordLength>
+      <StopBits>1</StopBits>
+      <Parity>None</Parity>
+      <HardwareFlowControl>None</HardwareFlowControl>
+      <Interrupt>Enable</Interrupt>
+    </USART2>
+    <SPI2>
+      <Mode>Master</Mode>
+      <DataSize>8 bits</DataSize>
+      <ClockPolarity>Low</ClockPolarity>
+      <ClockPhase>1 Edge</ClockPhase>
+      <NSS>Software</NSS>
+      <BaudRatePrescaler>16</BaudRatePrescaler>
+      <FirstBit>MSB</FirstBit>
+    </SPI2>
+  </Peripherals>
+</project>

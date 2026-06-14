@@ -1,0 +1,19 @@
+{
+  "name": "waterqualitymonitoring_web",
+  "version": "1.0.0",
+  "description": "智慧水质监测系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@huaweicloud/huaweicloud-sdk-iam": "^3.1.198",
+    "@huaweicloud/huaweicloud-sdk-iotda": "^3.1.198",
+    "express": "^4.18.2",
+    "uuid": "^14.0.0"
+  }
+}

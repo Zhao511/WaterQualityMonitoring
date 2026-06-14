@@ -1,0 +1,495 @@
+/**
+ * ============================================================
+ * 物联网业务服务层 — 感知层实现
+ * ============================================================
+ * 职责: 传感器采集校准 / 阈值管理 / 告警检测上报 / 命令执行
+ * 不在感知层: 告警模式管理 (自动/手动/静音/清除) → 应用层负责
+ * ============================================================
+ */
+
+#include "iot_service.h"
+#include "sensor_ph.h"
+#include "sensor_tds.h"
+#include "sensor_turbidity.h"
+#include "sensor_temp.h"
+#include "gps.h"
+#include "lora.h"
+#include "led_rgb.h"
+#include "usart_debug.h"
+
+/* NVIC_SystemReset (CMSIS 精简版未提供此函数, 用内联汇编实现) */
+__asm void NVIC_SystemReset(void)
+{
+    LDR    R0, =0xE000ED0C   /* SCB->AIRCR 地址 */
+    LDR    R1, =0x05FA0004   /* VECTKEY (0x5FA<<16) | SYSRESETREQ (1<<2) */
+    STR    R1, [R0]
+    DSB
+    B      .
+}
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/* IoT 任务句柄 (main.c 定义, 用于即时上报通知) */
+extern TaskHandle_t xIOTTaskHandle;
+#define IOT_IMMEDIATE_REPORT_BIT   0x01
+
+/* ================================================================
+ * 全局单例
+ * ================================================================ */
+/* 全局单例定义在 main.c, 此处仅声明 (见 iot_service.h extern) */
+
+/* ================================================================
+ * 内部状态
+ * ================================================================ */
+static SensorCalibration g_cal;
+static uint32_t g_alarm_seq = 0;
+static uint32_t g_sync_time_base = 0;
+static uint32_t g_sync_tick_base = 0;
+
+static struct {
+    bool   enable;
+    float  center_lon;
+    float  center_lat;
+    float  radius;
+    char   action[16];
+    char   fence_id[16];
+} g_geo_fence;
+
+/* ================================================================
+ * 时间戳
+ * ================================================================ */
+static void make_timestamp(char *buf, int max_len)
+{
+    uint32_t sec;
+    if (g_sync_time_base > 0) {
+        sec = g_sync_time_base +
+              (xTaskGetTickCount() - g_sync_tick_base) / configTICK_RATE_HZ;
+    } else {
+        sec = xTaskGetTickCount() / configTICK_RATE_HZ;
+    }
+    snprintf(buf, max_len, "%02d:%02d:%02d",
+             (sec / 3600) % 24, (sec / 60) % 60, sec % 60);
+}
+
+/* ================================================================
+ * 设备状态
+ * ================================================================ */
+void IOT_DeviceStatus_Init(DeviceStatus *s)
+{
+    memset(s, 0, sizeof(*s));
+    s->online     = true;
+    s->battery    = 100.0f;
+    s->signal     = 0;
+    s->power      = POWER_SOURCE_MAINS;
+    s->work_state = WORK_MODE_NORMAL;
+    make_timestamp(s->last_report, IOT_TIME_STR_LEN);
+}
+
+void IOT_DeviceStatus_Update(DeviceStatus *s)
+{
+    s->signal = IOT_Get_LoRa_RSSI();
+    make_timestamp(s->last_report, IOT_TIME_STR_LEN);
+}
+
+int8_t IOT_Get_LoRa_RSSI(void)
+{
+    /* E220 不支持 AT+RSSI, 返回固定值 -55dBm (中等信号) */
+    return -55;
+}
+
+/* ================================================================
+ * 告警检测 — 感知层只做阈值比对 + 生成告警事件
+ * 告警模式 (自动/手动/静音/清除) 由应用层/云端管理
+ * ================================================================ */
+void IOT_Alarm_Init(void)
+{
+    g_alarm_seq = 0;
+}
+
+int IOT_Alarm_Check(const WaterStatus *ws, const char *rfid,
+                    Alarm *alarm_out)
+{
+    if (!ws || !alarm_out) return 0;
+
+    uint8_t fail_count = 0;
+    float   worst_val  = 0;
+    float   worst_thr  = 0;
+
+    /* 水质五项检查 (始终开启，不可禁用) */
+    if (ws->ph < ws->ph_min) {
+        fail_count++; worst_val = ws->ph; worst_thr = ws->ph_min;
+    } else if (ws->ph > ws->ph_max) {
+        fail_count++; worst_val = ws->ph; worst_thr = ws->ph_max;
+    }
+    if (ws->tds > ws->tds_max) {
+        fail_count++;
+        if (ws->tds > worst_val || fail_count == 1) {
+            worst_val = ws->tds; worst_thr = ws->tds_max;
+        }
+    }
+    if (ws->temp < ws->temp_min) {
+        fail_count++; worst_val = ws->temp; worst_thr = ws->temp_min;
+    } else if (ws->temp > ws->temp_max) {
+        fail_count++; worst_val = ws->temp; worst_thr = ws->temp_max;
+    }
+    if (fail_count > 0) {
+        memset(alarm_out, 0, sizeof(*alarm_out));
+        g_alarm_seq++;
+        snprintf(alarm_out->alarm_id, IOT_ALARM_ID_LEN,
+                 "ALM_%04lu", (unsigned long)g_alarm_seq);
+        alarm_out->alarm_type    = ALARM_TYPE_WATER;
+        memcpy(alarm_out->device_id, IOT_DEVICE_ID_DEFAULT, IOT_DEVICE_ID_MAX - 1);
+        memcpy(alarm_out->rfid, rfid ? rfid : "", IOT_RFID_LEN - 1);
+        alarm_out->current_value = worst_val;
+        alarm_out->threshold     = worst_thr;
+        alarm_out->alarm_level   = (fail_count >= 3) ? ALARM_LEVEL_CRITICAL
+                                 : (fail_count >= 2) ? ALARM_LEVEL_SERIOUS
+                                 : ALARM_LEVEL_NORMAL;
+        alarm_out->status        = ALARM_STATUS_UNHANDLED;
+        make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
+        return 1;
+    }
+
+    /* 电池低电告警 */
+    if (g_device_status.battery < IOT_BATTERY_LOW_THRESHOLD) {
+        memset(alarm_out, 0, sizeof(*alarm_out));
+        g_alarm_seq++;
+        snprintf(alarm_out->alarm_id, IOT_ALARM_ID_LEN,
+                 "ALM_%04lu", (unsigned long)g_alarm_seq);
+        alarm_out->alarm_type    = ALARM_TYPE_BATTERY;
+        alarm_out->current_value = g_device_status.battery;
+        alarm_out->threshold     = IOT_BATTERY_LOW_THRESHOLD;
+        alarm_out->alarm_level   = ALARM_LEVEL_SERIOUS;
+        alarm_out->status        = ALARM_STATUS_UNHANDLED;
+        make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
+        return 2;
+    }
+
+    /* 信号弱告警 */
+    if (g_device_status.signal < IOT_SIGNAL_WEAK_THRESHOLD &&
+        g_device_status.signal != 0) {
+        memset(alarm_out, 0, sizeof(*alarm_out));
+        g_alarm_seq++;
+        snprintf(alarm_out->alarm_id, IOT_ALARM_ID_LEN,
+                 "ALM_%04lu", (unsigned long)g_alarm_seq);
+        alarm_out->alarm_type    = ALARM_TYPE_SIGNAL;
+        alarm_out->current_value = g_device_status.signal;
+        alarm_out->threshold     = IOT_SIGNAL_WEAK_THRESHOLD;
+        alarm_out->alarm_level   = ALARM_LEVEL_NORMAL;
+        alarm_out->status        = ALARM_STATUS_UNHANDLED;
+        make_timestamp(alarm_out->alarm_time, IOT_TIME_STR_LEN);
+        return 3;
+    }
+
+    return 0;
+}
+
+/* ================================================================
+ * 阈值管理
+ * ================================================================ */
+void IOT_Threshold_Init(WaterStatus *ws)
+{
+    if (!ws) return;
+    ws->ph_min        = IOT_DEFAULT_PH_MIN;
+    ws->ph_max        = IOT_DEFAULT_PH_MAX;
+    ws->tds_max       = IOT_DEFAULT_TDS_MAX;
+    ws->turbidity_max = IOT_DEFAULT_TURBIDITY_MAX;
+    ws->temp_min      = IOT_DEFAULT_TEMP_MIN;
+    ws->temp_max      = IOT_DEFAULT_TEMP_MAX;
+}
+
+bool IOT_Threshold_Set(WaterStatus *ws, const char *param, float value)
+{
+    if (!ws || !param) return false;
+
+    if      (strcmp(param, "ph_min") == 0)        ws->ph_min        = value;
+    else if (strcmp(param, "ph_max") == 0)        ws->ph_max        = value;
+    else if (strcmp(param, "tds_max") == 0)       ws->tds_max       = value;
+    else if (strcmp(param, "turbidity_max") == 0) ws->turbidity_max = value;
+    else if (strcmp(param, "temp_min") == 0)      ws->temp_min      = value;
+    else if (strcmp(param, "temp_max") == 0)      ws->temp_max      = value;
+    else return false;
+
+    Debug_Printf("IOT: Threshold %s = %.2f\r\n", param, value);
+    return true;
+}
+
+/* ================================================================
+ * 传感器校准
+ * ================================================================ */
+void IOT_Calibration_Init(void)  { memset(&g_cal, 0, sizeof(g_cal)); }
+
+void IOT_Calibration_Set(const char *sensor, const char *mode, float value)
+{
+    if (!sensor || !mode) return;
+    if (strcmp(mode, "offset") == 0) {
+        if      (strcmp(sensor, "ph")        == 0) g_cal.ph_offset        = value;
+        else if (strcmp(sensor, "tds")       == 0) g_cal.tds_offset       = value;
+        else if (strcmp(sensor, "turbidity") == 0) g_cal.turbidity_offset = value;
+        else if (strcmp(sensor, "temp")      == 0) g_cal.temp_offset      = value;
+    }
+    Debug_Printf("IOT: Calibrate %s %s = %.3f\r\n", sensor, mode, value);
+}
+
+void IOT_Calibration_Get(SensorCalibration *cal) { if (cal) *cal = g_cal; }
+
+float IOT_Apply_Calibration(const char *sensor, float raw)
+{
+    if (!sensor) return raw;
+    if      (strcmp(sensor, "ph")        == 0) return raw + g_cal.ph_offset;
+    else if (strcmp(sensor, "tds")       == 0) return raw + g_cal.tds_offset;
+    else if (strcmp(sensor, "turbidity") == 0) return raw + g_cal.turbidity_offset;
+    else if (strcmp(sensor, "temp")      == 0) return raw + g_cal.temp_offset;
+    return raw;
+}
+
+/* ================================================================
+ * GPS NMEA → Decimal
+ * ================================================================ */
+float IOT_GPS_NMEA2Decimal(const char *nmea, char hem)
+{
+    if (!nmea || strlen(nmea) < 4) return 0.0f;
+    float raw = (float)atof(nmea);
+    int deg = (hem == 'N' || hem == 'S')
+              ? (int)(raw / 100.0f)
+              : (int)(raw / 100.0f);
+    raw = deg + (raw - deg * 100.0f) / 60.0f;
+    if (hem == 'S' || hem == 'W') raw = -raw;
+    return raw;
+}
+
+void IOT_GPS_GetDecimal(GPS *gps_out)
+{
+    if (!gps_out) return;
+    GPS_Data raw_gps;
+    GPS_GetData(&raw_gps);
+
+    /* 使用 NMEA 数据中的实际半球指示符 */
+    char lat_hem = (raw_gps.lat_hem == 'S' || raw_gps.lat_hem == 'N')
+                   ? raw_gps.lat_hem : 'N';
+    char lon_hem = (raw_gps.lon_hem == 'W' || raw_gps.lon_hem == 'E')
+                   ? raw_gps.lon_hem : 'E';
+
+    gps_out->latitude  = IOT_GPS_NMEA2Decimal(raw_gps.lat, lat_hem);
+    gps_out->longitude = IOT_GPS_NMEA2Decimal(raw_gps.lon, lon_hem);
+    gps_out->gps_status = (raw_gps.fix >= 2) ? GPS_FIX_3D
+                        : (raw_gps.fix >= 1) ? GPS_FIX_2D
+                        : GPS_NO_FIX;
+}
+
+/* ================================================================
+ * 命令分发器 — 12 条感知层命令
+ * 告警模式管理 (set_alarm_mode / mute_alarm / clear_alarm) 由应用层负责
+ * ================================================================ */
+bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
+                      const char *params,
+                      char *rsp_buf, int max_len)
+{
+    if (!svc || !cmd || !rsp_buf) return false;
+
+    /* ---- DeviceStatus (4 条) ---- */
+    if (strcmp(svc, "DeviceStatus") == 0) {
+
+        if (strcmp(cmd, "set_work_mode") == 0) {
+            int mode = 0;
+            iot_json_get_int(params, "mode", &mode);
+            if (mode >= 0 && mode <= 2) {
+                g_device_status.work_state = (WorkState)mode;
+                iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            } else {
+                iot_json_serialize_response(cmd, false, "invalid mode", rsp_buf, max_len);
+            }
+            return true;
+        }
+
+        if (strcmp(cmd, "remote_reboot") == 0) {
+            int delay_sec = 0;
+            iot_json_get_int(params, "delay", &delay_sec);
+            Debug_Printf("IOT: Remote reboot requested, delay=%ds\r\n", delay_sec);
+            iot_json_serialize_response(cmd, true, "rebooting", rsp_buf, max_len);
+            /* 注: STM32 当前无软件延迟重启机制, 立即执行复位 */
+            NVIC_SystemReset();
+            return true;
+        }
+
+        if (strcmp(cmd, "ota_upgrade") == 0) {
+            iot_json_serialize_response(cmd, false, "OTA not supported", rsp_buf, max_len);
+            return true;
+        }
+
+        if (strcmp(cmd, "set_lora_param") == 0) {
+            int freq = 0, sf = 0, power = 0;
+            iot_json_get_int(params, "frequency", &freq);
+            iot_json_get_int(params, "spreading_factor", &sf);
+            iot_json_get_int(params, "power", &power);
+            Debug_Printf("IOT: LoRa params freq=%d sf=%d power=%d (stub)\r\n", freq, sf, power);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+    }
+
+    /* ---- Alarm (3 条) ---- */
+    if (strcmp(svc, "Alarm") == 0) {
+        if (strcmp(cmd, "set_alarm_mode") == 0) {
+            char mode_str[16] = {0};
+            int buffer_time = 0;
+            iot_json_get_str(params, "mode", mode_str, sizeof(mode_str));
+            iot_json_get_int(params, "buffer_time", &buffer_time);
+            Debug_Printf("IOT: Alarm mode = %s, buffer=%ds\r\n", mode_str, buffer_time);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+        if (strcmp(cmd, "clear_alarm") == 0) {
+            char alarm_id[IOT_ALARM_ID_LEN] = {0};
+            iot_json_get_str(params, "alarm_id", alarm_id, sizeof(alarm_id));
+            Debug_Printf("IOT: Clear alarm %s\r\n", alarm_id[0] ? alarm_id : "(all)");
+            iot_json_serialize_response(cmd, true, "cleared", rsp_buf, max_len);
+            return true;
+        }
+        if (strcmp(cmd, "mute_alarm") == 0) {
+            int duration = 0;
+            char types[64] = {0};
+            iot_json_get_int(params, "duration", &duration);
+            iot_json_get_str(params, "types", types, sizeof(types));
+            Debug_Printf("IOT: Mute alarm duration=%ds types=%s\r\n", duration, types);
+            iot_json_serialize_response(cmd, true, "muted", rsp_buf, max_len);
+            return true;
+        }
+    }
+
+    /* ---- Water_status (5 条) ---- */
+    if (strcmp(svc, "Water_status") == 0) {
+
+        if (strcmp(cmd, "set_report_interval") == 0) {
+            int interval = 0;
+            iot_json_get_int(params, "interval", &interval);
+            if (interval >= 1 && interval <= 3600) {
+                g_report_interval_sec = (uint32_t)interval;
+                iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            } else {
+                iot_json_serialize_response(cmd, false, "invalid interval", rsp_buf, max_len);
+            }
+            return true;
+        }
+
+        if (strcmp(cmd, "set_threshold") == 0) {
+            char param[32] = {0};
+            float min = 0, max = 0;
+            iot_json_get_str(params, "param", param, sizeof(param));
+            iot_json_get_float(params, "min", &min);
+            iot_json_get_float(params, "max", &max);
+
+            if (strcmp(param, "ph") == 0 || strcmp(param, "pH") == 0) {
+                g_water_status.ph_min = min; g_water_status.ph_max = max;
+            } else if (strcmp(param, "tds") == 0) {
+                g_water_status.tds_max = max;
+            } else if (strcmp(param, "turbidity") == 0) {
+                g_water_status.turbidity_max = max;
+            } else if (strcmp(param, "temp") == 0) {
+                g_water_status.temp_min = min; g_water_status.temp_max = max;
+            } else {
+                iot_json_serialize_response(cmd, false, "unknown param", rsp_buf, max_len);
+                return true;
+            }
+            Debug_Printf("IOT: Threshold %s [%.2f, %.2f]\r\n", param, min, max);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+
+        if (strcmp(cmd, "calibrate_sensor") == 0) {
+            char sensor[16] = {0}, mode[16] = {0};
+            float value = 0;
+            iot_json_get_str(params, "sensor", sensor, sizeof(sensor));
+            iot_json_get_str(params, "mode", mode, sizeof(mode));
+            iot_json_get_float(params, "value", &value);
+            IOT_Calibration_Set(sensor, mode, value);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+
+        if (strcmp(cmd, "led_control") == 0) {
+            char color_str[16] = {0}, mode_str[16] = {0};
+            iot_json_get_str(params, "color", color_str, sizeof(color_str));
+            iot_json_get_str(params, "mode", mode_str, sizeof(mode_str));
+            LED_Color c = LED_COLOR_OFF;
+            if      (strcmp(color_str, "red")    == 0) c = LED_COLOR_RED;
+            else if (strcmp(color_str, "green")  == 0) c = LED_COLOR_GREEN;
+            else if (strcmp(color_str, "blue")   == 0) c = LED_COLOR_BLUE;
+            else if (strcmp(color_str, "yellow") == 0) c = LED_COLOR_YELLOW;
+            else if (strcmp(color_str, "white")  == 0) c = LED_COLOR_WHITE;
+            LED_RGB_SetColor(c);
+            Debug_Printf("IOT: LED color=%s mode=%s\r\n", color_str, mode_str);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+
+        if (strcmp(cmd, "request_immediate_report") == 0) {
+            /* 通知 IoT 任务立即上报 */
+            if (xIOTTaskHandle != NULL) {
+                xTaskNotify(xIOTTaskHandle, IOT_IMMEDIATE_REPORT_BIT, eSetBits);
+            }
+            iot_json_serialize_response(cmd, true, "reporting", rsp_buf, max_len);
+            return true;
+        }
+    }
+
+    /* ---- gps (3 条, clear_alarm/set_alarm_mode/mute_alarm 在应用层) ---- */
+    if (strcmp(svc, "gps") == 0) {
+
+        if (strcmp(cmd, "set_gps_mode") == 0) {
+            int mode = 0, interval = 0;
+            iot_json_get_int(params, "mode", &mode);
+            iot_json_get_int(params, "interval", &interval);
+            Debug_Printf("IOT: GPS mode=%d interval=%d (stub)\r\n", mode, interval);
+            iot_json_serialize_response(cmd, true, "ok", rsp_buf, max_len);
+            return true;
+        }
+
+        if (strcmp(cmd, "request_location") == 0) {
+            IOT_GPS_GetDecimal(&g_gps_data);
+            snprintf(rsp_buf, max_len,
+                "{\"rsp\":\"%s\",\"result\":true,\"msg\":\"ok\","
+                "\"longitude\":%.6f,\"latitude\":%.6f,"
+                "\"fix_time\":\"%s\"}",
+                cmd, g_gps_data.longitude, g_gps_data.latitude,
+                g_device_status.last_report);
+            return true;
+        }
+
+        if (strcmp(cmd, "set_geo_fence") == 0) {
+            int enable = 0;
+            iot_json_get_int(params, "enable", &enable);
+            g_geo_fence.enable = (enable != 0);
+            iot_json_get_float(params, "center_lon", &g_geo_fence.center_lon);
+            iot_json_get_float(params, "center_lat", &g_geo_fence.center_lat);
+            iot_json_get_float(params, "radius", &g_geo_fence.radius);
+            iot_json_get_str(params, "action", g_geo_fence.action, sizeof(g_geo_fence.action));
+            snprintf(g_geo_fence.fence_id, sizeof(g_geo_fence.fence_id), "FENCE_001");
+            snprintf(rsp_buf, max_len,
+                "{\"rsp\":\"%s\",\"result\":true,\"msg\":\"ok\",\"fence_id\":\"%s\"}",
+                cmd, g_geo_fence.fence_id);
+            return true;
+        }
+
+        if (strcmp(cmd, "sync_time") == 0) {
+            char source[16] = {0}, manual_time[32] = {0};
+            iot_json_get_str(params, "source", source, sizeof(source));
+            iot_json_get_str(params, "manual_time", manual_time, sizeof(manual_time));
+            /* 注: STM32 无 RTC, 暂用运行时间戳; manual_time 可用于计算偏移 */
+            g_sync_time_base = 0;
+            g_sync_tick_base = xTaskGetTickCount();
+            Debug_Printf("IOT: Time sync source=%s manual=%s\r\n", source, manual_time);
+            iot_json_serialize_response(cmd, true, "synced", rsp_buf, max_len);
+            return true;
+        }
+    }
+
+    /* 未匹配 */
+    snprintf(rsp_buf, max_len,
+        "{\"rsp\":\"%s\",\"result\":false,\"msg\":\"unknown command\"}", cmd);
+    return false;
+}
