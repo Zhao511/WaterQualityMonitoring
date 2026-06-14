@@ -14,7 +14,7 @@ static uint32_t g_lora_bytes_total = 0;
 static uint32_t g_lora_frames_total = 0;
 
 /* ---- 波特率扫描列表 ---- */
-static const uint32_t BAUD_SCAN[] = { LORA_BAUD_RATE, 9600, 19200, 38400, 4800, 115200, 57600, 2400 };
+static const uint32_t BAUD_SCAN[] = { LORA_BAUD_RATE, 9600, 19200, 38400, 4800, 14400, 57600, 2400 };
 #define BAUD_SCAN_N (sizeof(BAUD_SCAN) / sizeof(BAUD_SCAN[0]))
 
 /* ================================================================
@@ -149,30 +149,8 @@ void lora_init()
         lora_at("AT+RATE?", 500);
         lora_at("AT+RF?", 500);
 
-        /* === 尝试恢复出厂设置 (不同固件命令名不同) === */
-        DEBUG_SERIAL.println("[LoRa] Trying factory reset...");
-        bool reset_ok = lora_at("AT+RESET", 1000);
-        if (!reset_ok) reset_ok = lora_at("AT+RELOAD", 1000);
-        if (!reset_ok) reset_ok = lora_at("AT+RENEW", 1000);
-        if (!reset_ok) reset_ok = lora_at("AT+DEFAULT", 1000);
-        if (!reset_ok) reset_ok = lora_at("AT+RESTORE", 1000);
-
-        if (reset_ok)
-        {
-            /* RESET 后模块重启, 可能需要重新检测波特率 */
-            DEBUG_SERIAL.println("[LoRa] Factory reset OK, re-detecting baud...");
-            delay(1000);
-
-            /* 重新扫描波特率 (重置后可能回到 9600) */
-            lora_set_baud(9600);
-            delay(300);
-            at_ok = lora_at("AT", 600);
-            if (!at_ok) {
-                lora_set_baud(LORA_BAUD_RATE);
-                delay(300);
-                at_ok = lora_at("AT", 600);
-            }
-        }
+        /* === 仅在后续配置全部失败时才复位 (避免反复重置已配置好的模块) === */
+        bool need_reset = false;
 
         /* === 配置地址 === */
         if (at_ok)
@@ -182,7 +160,7 @@ void lora_init()
             if (!lora_at(cmd, 800))
             {
                 snprintf(cmd, sizeof(cmd), "AT+ADDR=%02X", LORA_DEFAULT_ADDRESS);
-                lora_at(cmd, 800);
+                if (!lora_at(cmd, 800)) need_reset = true;
             }
         }
 
@@ -203,13 +181,63 @@ void lora_init()
             }
             if (!ch_ok) {
                 snprintf(cmd, sizeof(cmd), "AT+FREQ=%d", LORA_DEFAULT_CHANNEL);
-                lora_at(cmd, 800);
+                if (!lora_at(cmd, 800)) need_reset = true;
+            }
+        }
+
+        /* === 仅在地址/信道配置全部失败时才出厂复位 === */
+        if (need_reset && at_ok) {
+            DEBUG_SERIAL.println("[LoRa] Address/Channel config failed, trying factory reset...");
+            bool reset_ok = lora_at("AT+RESET", 1000);
+            if (!reset_ok) reset_ok = lora_at("AT+RELOAD", 1000);
+            if (!reset_ok) reset_ok = lora_at("AT+RENEW", 1000);
+            if (!reset_ok) reset_ok = lora_at("AT+DEFAULT", 1000);
+            if (!reset_ok) reset_ok = lora_at("AT+RESTORE", 1000);
+
+            if (reset_ok) {
+                DEBUG_SERIAL.println("[LoRa] Factory reset OK, re-detecting baud...");
+                delay(1000);
+                lora_set_baud(9600);
+                delay(300);
+                at_ok = lora_at("AT", 600);
+                if (!at_ok) {
+                    lora_set_baud(LORA_BAUD_RATE);
+                    delay(300);
+                    at_ok = lora_at("AT", 600);
+                }
+                /* 复位后重新配置地址和信道 */
+                if (at_ok) {
+                    char cmd[32];
+                    snprintf(cmd, sizeof(cmd), "AT+ADDR=%d", LORA_DEFAULT_ADDRESS);
+                    if (!lora_at(cmd, 800)) {
+                        snprintf(cmd, sizeof(cmd), "AT+ADDR=%02X", LORA_DEFAULT_ADDRESS);
+                        lora_at(cmd, 800);
+                    }
+                    snprintf(cmd, sizeof(cmd), "AT+CH=%d", LORA_DEFAULT_CHANNEL);
+                    if (!lora_at(cmd, 800)) {
+                        snprintf(cmd, sizeof(cmd), "AT+CHANNEL=%d", LORA_DEFAULT_CHANNEL);
+                        if (!lora_at(cmd, 800)) {
+                            snprintf(cmd, sizeof(cmd), "AT+RF=%d", LORA_DEFAULT_CHANNEL);
+                            lora_at(cmd, 800);
+                        }
+                    }
+                }
+            }
+        }
+
+        /* === 显式配置空中速率, 确保两端一致 (默认 2.4kbps) === */
+        if (at_ok) {
+            /* ATK-LORA-01: AT+RATE=<0~5> (0=0.3k, 1=1.2k, 2=2.4k, 3=4.8k, 4=9.6k, 5=19.2k) */
+            if (!lora_at("AT+RATE=2", 800)) {
+                /* E220 兼容格式: AT+PARAM=<SF>,<BW>,<CR>,<preamble> */
+                lora_at("AT+PARAM=9,7,1,8", 800);
             }
         }
 
         /* === 最终确认 === */
         lora_at("AT+ADDR?", 500);
         lora_at("AT+CH?", 500);
+        lora_at("AT+RATE?", 500);
     }
 
     /* === 切回透传模式 === */

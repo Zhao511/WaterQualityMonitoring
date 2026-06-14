@@ -314,6 +314,14 @@ void LoRa_Init(void)
         /* 查询确认 */
         LoRa_SendAT("AT+ADDR?\r\n", at_resp, sizeof(at_resp));
         LoRa_SendAT("AT+CH?\r\n", at_resp, sizeof(at_resp));
+
+        /* 显式配置空中速率, 确保两端一致 (默认 2.4kbps)
+         * ATK-LORA-01: AT+RATE=<0~5> (2=2.4kbps)
+         * E220 兼容: AT+PARAM=<SF>,<BW>,<CR>,<preamble> (9=SF9,7=125kHz,1=4/5,8=前导8) */
+        if (LoRa_SendAT("AT+RATE=2\r\n", at_resp, sizeof(at_resp)) != 0) {
+            LoRa_SendAT("AT+PARAM=9,7,1,8\r\n", at_resp, sizeof(at_resp));
+        }
+        LoRa_SendAT("AT+RATE?\r\n", at_resp, sizeof(at_resp));
     }
 
     /* ================================================================
