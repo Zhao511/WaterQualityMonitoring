@@ -438,9 +438,8 @@ static void vIOTTask(void *pvParameters)
 
         if ((g_iot_cycle % 5) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[IoT] cycle=%lu | interval=%lus | RSSI=%d\r\n",
-                             g_iot_cycle, g_report_interval_sec,
-                             IOT_Get_LoRa_RSSI());
+                Debug_Printf("[IoT] cycle=%lu | interval=%lus\r\n",
+                             g_iot_cycle, g_report_interval_sec);
                 xSemaphoreGive(xDebugMutex);
             }
         }

@@ -110,23 +110,30 @@ void IOT_DeviceStatus_Update(DeviceStatus *s)
 
 int8_t IOT_Get_LoRa_RSSI(void)
 {
-    /* 尝试通过 AT 指令读取 RSSI, 兼容不同模块固件 */
-    char resp[32];
-    int rssi = -55;  /* 默认值: 中等信号 */
+    /* 静态缓存: 启动时查询一次, 之后直接返回缓存值
+     * 避免频繁切换配置模式导致 RF 数据丢失 (ping 被 AT 响应缓冲区吞掉) */
+    static int8_t  s_rssi_cached = -55;
+    static bool    s_rssi_queried = false;
 
-    if (LoRa_SendATCmd("AT+RSSI?", resp, sizeof(resp)) == 0) {
-        /* 解析响应: 期望格式 "RSSI: -XX" 或直接数字 */
-        char *p = strstr(resp, "RSSI");
-        if (p) {
-            p = strchr(p, ':');
-            if (p) rssi = (int)strtol(p + 1, NULL, 10);
-        } else {
-            rssi = (int)strtol(resp, NULL, 10);
+    if (!s_rssi_queried) {
+        char resp[32];
+        int rssi = -55;
+
+        if (LoRa_SendATCmd("AT+RSSI?", resp, sizeof(resp)) == 0) {
+            char *p = strstr(resp, "RSSI");
+            if (p) {
+                p = strchr(p, ':');
+                if (p) rssi = (int)strtol(p + 1, NULL, 10);
+            } else {
+                rssi = (int)strtol(resp, NULL, 10);
+            }
+            if (rssi > 0) rssi = -rssi;
         }
-        if (rssi > 0) rssi = -rssi;  /* 纠正正数符号 */
+        s_rssi_cached = (int8_t)rssi;
+        s_rssi_queried = true;
     }
 
-    return (int8_t)rssi;
+    return s_rssi_cached;
 }
 
 /* ================================================================

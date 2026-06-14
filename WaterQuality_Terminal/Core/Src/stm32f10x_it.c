@@ -56,8 +56,8 @@ static void UART_RX_ISR(USART_TypeDef *USARTx, uint8_t *buf,
             buf[(*idx)++] = data;
         else
         {
-            *idx = 0;
-            buf[(*idx)++] = data;
+            /* 缓冲区满: 丢弃当前字节, 保护已有数据
+             * 防止 idx 重置为 0 导致已积累数据被破坏 (如 ping 报文碎片化) */
         }
         USART_ClearITPendingBit(USARTx, USART_IT_RXNE);
     }

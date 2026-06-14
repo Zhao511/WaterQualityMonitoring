@@ -321,12 +321,17 @@ void mqtt_report_property(const String &service_json)
         return;
     }
 
+    /* 华为云 IoTDA 标准格式: {"services":[{"service_id":"X","properties":{...}}]}
+     * STM32 和 toCloudJson() 生成的是内层 {"service_id":"X","properties":{...}}
+     * 在此统一包装 services 数组外层 */
+    String wrapped = "{\"services\":[" + service_json + "]}";
+
     DEBUG_SERIAL.print("[MQTT PUB] ");
     DEBUG_SERIAL.print(g_topic_property);
     DEBUG_SERIAL.print("  ");
-    DEBUG_SERIAL.println(service_json);
+    DEBUG_SERIAL.println(wrapped);
 
-    g_mqtt.publish(g_topic_property.c_str(), service_json.c_str());
+    g_mqtt.publish(g_topic_property.c_str(), wrapped.c_str());
 }
 
 /* ================================================================
