@@ -11,7 +11,7 @@
  *   vWatchdogTask(Prio 4, Stack 128W) — IWDG 看门狗监控 + 心跳检查
  *   vSensorTask  (Prio 3, Stack 256W) — 传感器 1s 采集 + 告警判定
  *   vGPSTask     (Prio 2, Stack 384W) — GPS 200ms 轮询 + NMEA→Decimal
- *   vIOTTask     (Prio 2, Stack 512W) — LoRa 收发 + 4 服务上报 + 命令处理
+ *   vIOTTask     (Prio 2, Stack 768W) — LoRa 收发 + 4 服务上报 + 命令处理
  *   vRFIDTask    (Prio 1, Stack 128W) — RFID 500ms 扫描
  *   vLEDTask     (Prio 1, Stack 128W) — 水质 & 命令 LED 指示
  * ============================================================
@@ -363,6 +363,9 @@ static void vIOTTask(void *pvParameters)
 
     for (;;)
     {
+        /* 诊断: 每次循环无条件输出, 用于定位任务是否在运行 */
+        Debug_Printf("[IoT] alive tick=%lu\r\n", tick_count);
+
         /* --- LoRa 下行命令处理 (每次循环都检查) --- */
         IOT_Process_Incoming();
 
@@ -678,7 +681,7 @@ int main(void)
     ret = xTaskCreate(vGPSTask,   "GPS",    384, NULL, 2, NULL);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
-    ret = xTaskCreate(vIOTTask,   "IoT",    512, NULL, 2, &xIOTTaskHandle);
+    ret = xTaskCreate(vIOTTask,   "IoT",    768, NULL, 2, &xIOTTaskHandle);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
     ret = xTaskCreate(vRFIDTask,  "RFID",   128, NULL, 1, NULL);

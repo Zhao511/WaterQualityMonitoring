@@ -38,6 +38,7 @@ void IOT_Process_Incoming(void)
     uint16_t len;
 
     len = LoRa_ReceiveData(rx_buf, sizeof(rx_buf) - 1);
+    Debug_Printf("[IoT] RX check len=%u\r\n", len);
     if (len == 0) return;
 
     rx_buf[len] = '\0';

@@ -357,10 +357,16 @@ void LoRa_SendData(uint8_t *data, uint16_t length)
 
     for (uint16_t i = 0; i < length; i++)
     {
-        while (USART_GetFlagStatus(LORA_USART, USART_FLAG_TXE) == RESET);
+        uint32_t timeout = 100000;  /* TXE 超时保护 ~100ms */
+        while (USART_GetFlagStatus(LORA_USART, USART_FLAG_TXE) == RESET) {
+            if (--timeout == 0) break;
+        }
         USART_SendData(LORA_USART, data[i]);
     }
-    while (USART_GetFlagStatus(LORA_USART, USART_FLAG_TC) == RESET);
+    uint32_t timeout = 100000;  /* TC 超时保护 ~100ms */
+    while (USART_GetFlagStatus(LORA_USART, USART_FLAG_TC) == RESET) {
+        if (--timeout == 0) break;
+    }
 }
 
 /**
