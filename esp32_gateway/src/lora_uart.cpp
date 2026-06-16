@@ -98,7 +98,13 @@ void lora_init()
         /* 查询地址 (ATK-LORA-01 支持的唯一查询命令) */
         lora_at("AT+ADDR?", 500);
 
-        DEBUG_SERIAL.println("[LoRa] Module online, address=0 (default)");
+        /* === 显式配置关键参数, 确保与 STM32 侧一致 === */
+        lora_at("AT+BAUD=9600", 800);   /* 透传波特率 9600 */
+        lora_at("AT+ADDR=0", 800);      /* 地址 0 */
+        lora_at("AT+CH=0", 800);        /* 信道 0 (433MHz) */
+        lora_at("AT+RATE=2", 800);      /* 空中速率 2.4kbps */
+
+        DEBUG_SERIAL.println("[LoRa] Module online, configured: baud=9600 addr=0 ch=0 rate=2.4k");
     }
     else
     {
