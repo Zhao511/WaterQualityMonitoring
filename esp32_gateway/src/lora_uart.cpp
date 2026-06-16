@@ -73,8 +73,9 @@ static bool lora_wait_aux(uint32_t timeout_ms = 2000)
 
 /* ================================================================
  * 初始化 — ATK-LORA-01 透传模式
- * - AT 配置 + 透传 统一 9600 baud (AT+BAUD=9600 设置)
- * - 与 STM32 侧 lora.h LORA_BAUD_RATE=9600 一致
+ * - AT 配置模式 (MD0=HIGH):  波特率 115200 (模块硬件固定)
+ * - 通信透传模式 (MD0=LOW):  波特率 9600 (AT+BAUD=9600 设置)
+ * - AT+BAUD 发送后模块立即切波特率回复, 不等旧波特率响应
  * ================================================================ */
 void lora_init()
 {
@@ -83,35 +84,47 @@ void lora_init()
     digitalWrite(LORA_MD0_PIN, HIGH);   /* 进入 AT 配置模式 */
     pinMode(LORA_AUX_PIN, INPUT_PULLUP);
 
-    /* UART 初始化为 9600 (AT 配置 + 透传统一波特率) */
-    lora_set_baud(LORA_BAUD_RATE);
+    /* UART 初始化为 AT 配置波特率 115200 */
+    lora_set_baud(LORA_AT_BAUD_RATE);
     delay(300);
 
     DEBUG_SERIAL.printf("[LoRa] Init: AT mode | baud=%u | MD0=HIGH\n",
-                        (unsigned)LORA_BAUD_RATE);
+                        (unsigned)LORA_AT_BAUD_RATE);
 
-    /* 确认模块在线 */
+    /* 确认模块在线 (115200 baud) */
     bool at_ok = lora_at("AT", 800);
 
     if (at_ok)
     {
-        /* 配置关键参数 (均在 9600 下, 无需切换) */
         lora_at("AT+ADDR?", 500);        /* 查询当前地址 */
-        lora_at("AT+BAUD=9600", 800);    /* 透传波特率 9600 */
-        lora_at("AT+ADDR=0", 800);       /* 地址 0 */
-        lora_at("AT+CH=0", 800);         /* 信道 0 (433MHz) */
-        lora_at("AT+RATE=2", 800);       /* 空中速率 2.4kbps */
-        lora_at("AT+ADDR?", 500);        /* 验证 */
 
-        DEBUG_SERIAL.println("[LoRa] Configured: baud=9600 addr=0 ch=0 rate=2.4k");
+        /* AT+BAUD 特殊处理: 模块收到后立即切到新波特率再回复 OK,
+         * 旧波特率等待会超时。所以直接发命令, 不等回复, 切 ESP32 UART */
+        DEBUG_SERIAL.println("[LoRa] AT+BAUD=9600 -> switching ESP32 to 9600...");
+        LORA_SERIAL.print("AT+BAUD=9600\r\n");
+        LORA_SERIAL.flush();
+        delay(100);
+        lora_set_baud(LORA_BAUD_RATE);   /* 切到 9600 */
+        delay(200);
+
+        /* 9600 下继续配置 */
+        at_ok = lora_at("AT", 600);
+        if (at_ok) {
+            lora_at("AT+ADDR=0", 600);   /* 地址 0 */
+            lora_at("AT+CH=0", 600);     /* 信道 0 (433MHz) */
+            lora_at("AT+RATE=2", 600);   /* 空中速率 2.4kbps */
+            lora_at("AT+ADDR?", 500);    /* 验证 */
+        }
+        DEBUG_SERIAL.println(at_ok ? "[LoRa] OK: baud=9600 addr=0 ch=0 rate=2.4k"
+                                   : "[LoRa] WARN: 9600 AT fail after baud switch");
     }
     else
     {
-        DEBUG_SERIAL.println("[LoRa] WARN: AT no response at 9600 baud");
+        DEBUG_SERIAL.println("[LoRa] WARN: AT no response at 115200");
         DEBUG_SERIAL.println("[LoRa] Check VCC/GND/TX/RX/MD0 wiring");
     }
 
-    /* 切回透传模式 (MD0=LOW), 已处于 9600 无需切换波特率 */
+    /* 切回透传模式 (MD0=LOW), 已处于 9600 */
     delay(50);
     digitalWrite(LORA_MD0_PIN, LOW);
     delay(300);
