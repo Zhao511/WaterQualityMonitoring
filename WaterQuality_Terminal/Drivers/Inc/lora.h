@@ -27,7 +27,7 @@
 #define LORA_AUX_RCC      RCC_APB2Periph_GPIOB
 
 /* 默认 LoRa 参数 (与 ESP32 侧一致) */
-#define LORA_BAUD_RATE         9600
+#define LORA_BAUD_RATE         115200
 #define LORA_DEFAULT_ADDRESS   0
 #define LORA_DEFAULT_CHANNEL   0      /* 433MHz (ATK-LORA-01 默认) */
 
