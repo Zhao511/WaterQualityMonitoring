@@ -74,7 +74,7 @@ static bool lora_wait_aux(uint32_t timeout_ms = 2000)
 /* ================================================================
  * 初始化 — ATK-LORA-01 透传模式
  * - AT 配置模式 (MD0=HIGH):  波特率固定 115200
- * - 通信透传模式 (MD0=LOW):  波特率 9600 (出厂默认)
+ * - 通信透传模式 (MD0=LOW):  波特率 115200 (模块不支持 AT+BAUD, 与AT模式相同)
  * ================================================================ */
 void lora_init()
 {
@@ -98,13 +98,7 @@ void lora_init()
         /* 查询地址 (ATK-LORA-01 支持的唯一查询命令) */
         lora_at("AT+ADDR?", 500);
 
-        /* === 显式配置关键参数, 确保与 STM32 侧一致 === */
-        lora_at("AT+BAUD=9600", 800);   /* 透传波特率 9600 */
-        lora_at("AT+ADDR=0", 800);      /* 地址 0 */
-        lora_at("AT+CH=0", 800);        /* 信道 0 (433MHz) */
-        lora_at("AT+RATE=2", 800);      /* 空中速率 2.4kbps */
-
-        DEBUG_SERIAL.println("[LoRa] Module online, configured: baud=9600 addr=0 ch=0 rate=2.4k");
+        DEBUG_SERIAL.println("[LoRa] Module online (AT+BAUD/ADDR=/CH=/RATE= not supported)");
     }
     else
     {
@@ -112,7 +106,7 @@ void lora_init()
         DEBUG_SERIAL.println("[LoRa] Check VCC/GND/TX/RX/MD0 wiring");
     }
 
-    /* 切回透传模式 (MD0=LOW), 波特率 9600 */
+    /* 切回透传模式 (MD0=LOW), 波特率 115200 (模块固定) */
     delay(50);
     digitalWrite(LORA_MD0_PIN, LOW);
     delay(300);
