@@ -31,7 +31,7 @@ extern uint32_t SystemCoreClock;
 /* ================================================================
  * 内存管理
  * ================================================================ */
-#define configTOTAL_HEAP_SIZE           ( ( size_t ) ( 8 * 1024 ) )  /* 8192: 释放2KB给MSP+安全余量 */
+#define configTOTAL_HEAP_SIZE           ( ( size_t ) ( 12 * 1024 ) )  /* 12KB: 6任务+5队列+3互斥量 */
 #define configAPPLICATION_ALLOCATED_HEAP 0
 
 /* ================================================================

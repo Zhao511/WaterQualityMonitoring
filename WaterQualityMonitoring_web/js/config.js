@@ -25,7 +25,7 @@ var CONFIG = {
     // 历史数据存储（用于曲线查询）
     history: {},
 
-    // 设备列表（从华为云IoTDA同步）
+    // 设备列表（从华为云IoTDA同步，RFID为主键，无RFID时以device_id为key）
     devices: {}
 };
 

@@ -99,7 +99,8 @@ function renderDeviceSidebar() {
         var statusClass = d.status === 'ONLINE' ? 'online' : 'offline';
         html += '<div class=\"device-item' + activeClass + '\" onclick=\"switchDevice(\'' + d.id + '\')\">';
         html += '<span class=\"device-status-dot ' + statusClass + '\"></span>';
-        html += '<span class=\"device-name\">' + (d.name || d.id) + '</span>';
+        // 优先显示 RFID 作为设备名称
+        html += '<span class=\"device-name\">' + (d.rfid || d.name || d.id) + '</span>';
         html += '</div>';
     });
     el.innerHTML = html;
@@ -112,7 +113,7 @@ function renderDeviceSelector() {
     var html = '';
     devices.forEach(function(d) {
         var selected = d.id === CONFIG.currentDeviceId ? ' selected' : '';
-        html += '<option value=\"' + d.id + '\"' + selected + '>' + (d.name || d.id) + '</option>';
+        html += '<option value=\"' + d.id + '\"' + selected + '>' + (d.rfid || d.name || d.id) + '</option>';
     });
     sel.innerHTML = html;
 }
@@ -122,18 +123,21 @@ function renderDeviceTable() {
     if (!tbody) return;
     var devices = getAllDevices();
     if (devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan=\"6\" style=\"text-align:center;color:#999;\">暂无设备，请先连接华为云平台</td></tr>';
+        tbody.innerHTML = '<tr><td colspan=\"7\" style=\"text-align:center;color:#999;\">暂无设备，请先连接华为云平台</td></tr>';
         return;
     }
     var html = '';
     devices.forEach(function(d) {
         var statusLabel = d.status === 'ONLINE' ? '<span class=\"label label-success\">在线</span>' :
                           d.status === 'OFFLINE' ? '<span class=\"label label-warning\">离线</span>' :
+                          d.status === 'UNKNOWN' ? '<span class=\"label label-default\">未知</span>' :
                           '<span class=\"label label-default\">未知</span>';
         html += '<tr>';
-        html += '<td>' + (d.name || d.id) + '</td>';
+        // 设备标识（RFID 优先）
+        html += '<td>' + (d.rfid || d.name || d.id) + '</td>';
+        html += '<td>' + (d.name || '-') + '</td>';
         html += '<td>' + (d.location || '-') + '</td>';
-        html += '<td>' + (d.rfid || '-') + '</td>';
+        html += '<td><code>' + (d.sourceDeviceId || d.id) + '</code></td>';
         html += '<td>' + statusLabel + '</td>';
         html += '<td>' + (d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : '-') + '</td>';
         html += '<td><button class=\"btn btn-xs btn-info\" onclick=\"switchDevice(\'' + d.id + '\')\">查看</button></td>';
@@ -511,14 +515,15 @@ function updateWaterQualityData(device) {
     document.getElementById('device-lastreport').textContent = device.lastReport || '--';
     document.getElementById('gps-status').textContent = device.gpsStatus || '--';
 
-    document.getElementById('current-device-name').textContent = device.name || device.id;
+    document.getElementById('current-device-name').textContent = device.rfid || device.name || device.id;
 
     // 在线状态 - 以华为云 listDevices 返回的 status 为准
     var isOnline = device.status === 'ONLINE';
+    var isUnknown = device.status === 'UNKNOWN';
     var statusEl = document.getElementById('current-device-status');
     if (statusEl) {
-        statusEl.className = 'label ' + (isOnline ? 'label-success' : 'label-default');
-        statusEl.textContent = isOnline ? '在线' : '离线';
+        statusEl.className = 'label ' + (isOnline ? 'label-success' : (isUnknown ? 'label-warning' : 'label-default'));
+        statusEl.textContent = isOnline ? '在线' : (isUnknown ? '状态未知' : '离线');
     }
 
     checkThresholds(device);

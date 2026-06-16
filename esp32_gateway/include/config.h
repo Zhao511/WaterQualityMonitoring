@@ -13,7 +13,7 @@
  * WiFi 配置
  * ================================================================ */
 #define WIFI_SSID       "vivo Y78+"
-#define WIFI_PASSWORD   "88888888"
+#define WIFI_PASSWORD   "12345678"
 #define WIFI_TIMEOUT_MS 20000       /* WiFi 连接超时 (ms) */
 #define WIFI_RETRY_MAX  5            /* 最大重试次数 */
 
@@ -40,7 +40,8 @@
  * LoRa 模块 (正点原子 ATK-LORA-01) — 与 STM32 侧配对
  * ================================================================ */
 #define LORA_SERIAL         Serial2     /* UART2 */
-#define LORA_BAUD_RATE      115200      /* 与 STM32 侧一致 */
+#define LORA_BAUD_RATE      9600        /* 通信模式波特率 (ATK-LORA-01 默认 9600, 与 STM32 侧一致) */
+#define LORA_AT_BAUD_RATE   115200      /* AT 配置模式波特率 (ATK-LORA-01 固定 115200) */
 #define LORA_RX_PIN         26          /* GPIO26 ← 模块 TXD */
 #define LORA_TX_PIN         25          /* GPIO25 → 模块 RXD */
 #define LORA_AUX_PIN        35          /* GPIO35 ← 模块 AUX (仅输入, 状态指示) */

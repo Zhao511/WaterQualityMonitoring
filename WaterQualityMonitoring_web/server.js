@@ -53,6 +53,8 @@ var SERVICE_PROPS = {
 // 任一 Water_status 属性匹配即视为水质设备
 var WATER_QUALITY_KEYS = Object.keys(SERVICE_PROPS.Water_status);
 var pollingTimer = null;
+var consecutivePollFailures = 0;
+var MAX_POLL_FAILURES = 3;          // 连续失败 3 次 (15s) 标记所有设备状态陈旧
 
 // ==================== 客户端连接管理（引用计数 + 心跳） ====================
 var clients = {};            // { clientId: { lastHeartbeat: timestamp } }
@@ -215,35 +217,68 @@ function saveAlarmData(deviceId, props) {
 
 function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
     var devices = readJSON(DEVICES_FILE);
-    var isNewDevice = !devices[deviceId];
 
-    // 新设备必须有水质属性才创建，已有设备始终更新状态
+    // 1. 从 shadow 中提取 RFID，优先作为设备标识
+    var rfid = '';
+    if (shadowEntries && shadowEntries.length > 0) {
+        shadowEntries.forEach(function(entry) {
+            if (entry.service_id === 'Water_status' && entry.reported && entry.reported.properties) {
+                if (entry.reported.properties.rfid !== undefined && entry.reported.properties.rfid !== '') {
+                    rfid = String(entry.reported.properties.rfid);
+                }
+            }
+        });
+    }
+
+    // 2. 确定存储 key：优先 RFID，没有则用 device_id
+    var storageKey = rfid || deviceId;
+
+    // 3. 如果 RFID 变化（同一 device_id 上报了不同 RFID），清理旧条目
+    if (rfid) {
+        Object.keys(devices).forEach(function(key) {
+            if (key !== storageKey && devices[key].sourceDeviceId === deviceId && devices[key].rfid) {
+                // 旧 RFID 条目: 迁移历史/告警数据到新 key，然后移除
+                migrateDeviceFiles(key, storageKey);
+                delete devices[key];
+                console.log('[DEVICE] RFID 变化: ' + key + ' -> ' + storageKey);
+            }
+        });
+    }
+
+    // 4. 新设备必须有水质属性才创建
+    var isNewDevice = !devices[storageKey];
     if (isNewDevice && shadowEntries && shadowEntries.length > 0 && !isWaterQualityShadow(shadowEntries)) {
         return;
     }
 
     if (isNewDevice) {
-        devices[deviceId] = {
-            id: deviceId,
-            name: (deviceInfo && deviceInfo.device_name) || deviceId,
+        devices[storageKey] = {
+            id: storageKey,
+            name: (deviceInfo && deviceInfo.device_name) || storageKey,
             location: '',
             status: deviceInfo ? (deviceInfo.status || 'OFFLINE') : 'OFFLINE',
             statusOnline: false,
             battery: 0, signal: 0,
             power: '', workState: '', lastReport: '',
-            rfid: '', gpsRaw: '', longitude: 0, latitude: 0, gpsStatus: '',
+            rfid: rfid, sourceDeviceId: deviceId,
+            gpsRaw: '', longitude: 0, latitude: 0, gpsStatus: '',
             thresholds: { Tds_threshold: 1000, Ph_min: 6, Ph_max: 9, Temp_threshold: 50 },
             data: { tds: 0, ph: 0, temp: 0 },
             lastUpdate: new Date().toISOString()
         };
     }
-    var dev = devices[deviceId];
+    var dev = devices[storageKey];
+    // 更新关联字段（如果 RFID 后来才上报，补齐 rfid 和迁移 key）
+    dev.sourceDeviceId = deviceId;
+    if (rfid) dev.rfid = rfid;
+
     if (deviceInfo) {
         dev.name = deviceInfo.device_name || dev.name;
-        dev.status = deviceInfo.status || dev.status;
+        // 直接使用云端返回的 status，不回退到旧值，避免保留过期在线状态
+        dev.status = deviceInfo.status || 'OFFLINE';
     }
 
-    // 遍历所有服务影子条目
+    // 5. 遍历所有服务影子条目（历史/告警写入使用 storageKey）
     if (shadowEntries && shadowEntries.length > 0) {
         shadowEntries.forEach(function(entry) {
             if (!entry.reported || !entry.reported.properties) return;
@@ -253,13 +288,13 @@ function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
                     saveDeviceStatusData(dev, props);
                     break;
                 case 'Water_status':
-                    saveWaterStatusData(deviceId, dev, props);
+                    saveWaterStatusData(storageKey, dev, props);
                     break;
                 case 'gps':
                     saveGpsData(dev, props);
                     break;
                 case 'Alarm':
-                    saveAlarmData(deviceId, props);
+                    saveAlarmData(storageKey, props);
                     break;
             }
         });
@@ -267,6 +302,39 @@ function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
 
     dev.lastUpdate = new Date().toISOString();
     writeJSON(DEVICES_FILE, devices);
+}
+
+// 当 RFID 变化时，迁移历史数据和告警数据文件
+function migrateDeviceFiles(oldKey, newKey) {
+    var oldHistory = path.join(HISTORY_DIR, oldKey + '.json');
+    var newHistory = path.join(HISTORY_DIR, newKey + '.json');
+    var oldAlarms = path.join(ALARMS_DIR, oldKey + '.json');
+    var newAlarms = path.join(ALARMS_DIR, newKey + '.json');
+
+    try {
+        if (fs.existsSync(oldHistory)) {
+            var oldData = JSON.parse(fs.readFileSync(oldHistory, 'utf-8'));
+            var newData = [];
+            try { newData = JSON.parse(fs.readFileSync(newHistory, 'utf-8')); } catch(e) {}
+            var merged = oldData.concat(newData).sort(function(a, b) {
+                return new Date(a.time).getTime() - new Date(b.time).getTime();
+            });
+            fs.writeFileSync(newHistory, JSON.stringify(merged));
+            fs.unlinkSync(oldHistory);
+        }
+    } catch(e) { console.warn('[MIGRATE] 历史数据迁移失败:', e.message); }
+
+    try {
+        if (fs.existsSync(oldAlarms)) {
+            var oldA = JSON.parse(fs.readFileSync(oldAlarms, 'utf-8'));
+            var newA = [];
+            try { newA = JSON.parse(fs.readFileSync(newAlarms, 'utf-8')); } catch(e) {}
+            var mergedA = oldA.concat(newA);
+            if (mergedA.length > 500) mergedA = mergedA.slice(-500);
+            fs.writeFileSync(newAlarms, JSON.stringify(mergedA));
+            fs.unlinkSync(oldAlarms);
+        }
+    } catch(e) { console.warn('[MIGRATE] 告警数据迁移失败:', e.message); }
 }
 
 // ==================== 轮询 ====================
@@ -285,10 +353,33 @@ function stopPolling() {
 function pollOnce() {
     if (!hwConfig.ak || !hwConfig.sk || !hwConfig.projectId) return;
     syncFromCloud().then(function() {
+        consecutivePollFailures = 0;
         console.log('[POLL] OK, ' + Object.keys(readJSON(DEVICES_FILE)).length + ' 设备');
     }).catch(function(err) {
-        console.error('[POLL] 失败:', err.message);
+        consecutivePollFailures++;
+        console.error('[POLL] 失败 (' + consecutivePollFailures + '/' + MAX_POLL_FAILURES + '):', err.message);
+        if (consecutivePollFailures >= MAX_POLL_FAILURES) {
+            markAllDevicesStale();
+        }
     });
+}
+
+// 连续轮询失败时将所有 ONLINE 设备标记为 UNKNOWN，防止前端显示过期在线状态
+function markAllDevicesStale() {
+    var devices = readJSON(DEVICES_FILE);
+    var changed = false;
+    Object.keys(devices).forEach(function(id) {
+        if (devices[id].status === 'ONLINE') {
+            devices[id].status = 'UNKNOWN';
+            devices[id].statusOnline = false;
+            changed = true;
+            console.log('[POLL] 标记设备状态为 UNKNOWN: ' + id);
+        }
+    });
+    if (changed) {
+        writeJSON(DEVICES_FILE, devices);
+        console.log('[POLL] 连续 ' + MAX_POLL_FAILURES + ' 次失败, 所有 ONLINE 设备已标记为 UNKNOWN');
+    }
 }
 
 // 从华为云同步设备数据
@@ -389,31 +480,51 @@ app.post('/api/refresh', function(req, res) {
     });
 });
 
+// 根据标识符查找设备条目（支持 RFID key 和 sourceDeviceId 两种查询方式）
+function findDeviceByIdentifier(identifier) {
+    var devices = readJSON(DEVICES_FILE);
+    // 1. 直接匹配 key（RFID 或 device_id）
+    if (devices[identifier]) return { entry: devices[identifier], targetId: identifier };
+    // 2. 按 sourceDeviceId 查找（兼容旧 device_id 查询）
+    var keys = Object.keys(devices);
+    for (var i = 0; i < keys.length; i++) {
+        if (devices[keys[i]].sourceDeviceId === identifier) {
+            return { entry: devices[keys[i]], targetId: keys[i] };
+        }
+    }
+    return null;
+}
+
 // 下发报警命令到设备
 app.post('/api/alarm', function(req, res) {
     if (!hwConfig.ak) return res.json({ code: 401, message: '请先配置AK/SK' });
     var b = req.body;
-    var deviceId = b.deviceId;
+    var deviceIdentifier = b.deviceId;  // 可能是 RFID key 或华为云 device_id
     var alarmType = b.alarmType || '自动触发';
     var currentValue = b.currentValue || 0;
     var threshold = b.threshold || 0;
     var alarmLevel = b.alarmLevel || '警告';
-    if (!deviceId) return res.json({ code: 400, message: '缺少 deviceId' });
+    if (!deviceIdentifier) return res.json({ code: 400, message: '缺少 deviceId' });
 
-    console.log('[ALARM] 触发告警: ' + deviceId + ' type=' + alarmType);
-    // 写入本地告警记录
-    saveAlarmData(deviceId, {
+    // 查找设备：支持 RFID key 和 sourceDeviceId 两种查找方式
+    var found = findDeviceByIdentifier(deviceIdentifier);
+    var storageKey = found ? found.targetId : deviceIdentifier;
+    var actualDeviceId = found ? found.entry.sourceDeviceId : deviceIdentifier;
+
+    console.log('[ALARM] 触发告警: key=' + storageKey + ' device=' + actualDeviceId + ' type=' + alarmType);
+    // 写入本地告警记录（使用 storageKey 路径）
+    saveAlarmData(storageKey, {
         alarm_id: 'WEB-' + Date.now(),
         alarm_type: alarmType || '自动触发',
-        device_id: deviceId,
-        rfid: '',
+        device_id: actualDeviceId,
+        rfid: found ? (found.entry.rfid || '') : '',
         current_value: currentValue || 0,
         threshold: threshold || 0,
         alarm_level: alarmLevel || '警告',
         alarm_time: new Date().toISOString(),
         status: '未处理'
     });
-    sendAlarmCommand(deviceId, 'set_alarm_mode', {
+    sendAlarmCommand(actualDeviceId, 'set_alarm_mode', {
         mode: 'alert',
         buffer_time: 0
     }).then(function() {
@@ -426,11 +537,14 @@ app.post('/api/alarm', function(req, res) {
 // 停止报警命令
 app.post('/api/alarm/stop', function(req, res) {
     if (!hwConfig.ak) return res.json({ code: 401, message: '请先配置AK/SK' });
-    var deviceId = req.body.deviceId;
-    if (!deviceId) return res.json({ code: 400, message: '缺少 deviceId' });
+    var deviceIdentifier = req.body.deviceId;
+    if (!deviceIdentifier) return res.json({ code: 400, message: '缺少 deviceId' });
 
-    console.log('[ALARM] 停止告警: ' + deviceId);
-    sendAlarmCommand(deviceId, 'set_alarm_mode', {
+    var found = findDeviceByIdentifier(deviceIdentifier);
+    var actualDeviceId = found ? found.entry.sourceDeviceId : deviceIdentifier;
+
+    console.log('[ALARM] 停止告警: key=' + (found ? found.targetId : deviceIdentifier) + ' device=' + actualDeviceId);
+    sendAlarmCommand(actualDeviceId, 'set_alarm_mode', {
         mode: 'normal',
         buffer_time: 0
     }).then(function() {
@@ -441,8 +555,9 @@ app.post('/api/alarm/stop', function(req, res) {
 });
 
 app.get('/api/devices/:id', function(req, res) {
-    var dev = readJSON(DEVICES_FILE)[req.params.id];
-    dev ? res.json({ code: 200, data: dev }) : res.json({ code: 404, message: 'not found' });
+    var found = findDeviceByIdentifier(req.params.id);
+    if (found) return res.json({ code: 200, data: found.entry });
+    res.json({ code: 404, message: 'not found' });
 });
 
 app.get('/api/devices/:id/history', function(req, res) {
@@ -522,6 +637,40 @@ app.delete('/api/heartbeat', function(req, res) {
 
 app.use(express.static(__dirname));
 
+// ==================== 数据迁移：旧 device_id key → RFID key ====================
+function migrateDevicesIfNeeded() {
+    var devices = readJSON(DEVICES_FILE);
+    var migrated = {};
+    var needsMigration = false;
+    Object.keys(devices).forEach(function(key) {
+        var dev = devices[key];
+        // 已有 sourceDeviceId 字段说明已经迁移过
+        if (dev.sourceDeviceId) {
+            migrated[key] = dev;
+            return;
+        }
+        // 旧格式：key 是 device_id，检查是否有 rfid 可用作新 key
+        if (dev.rfid && dev.rfid !== key && dev.rfid !== '') {
+            dev.sourceDeviceId = key;
+            dev.id = dev.rfid;
+            migrated[dev.rfid] = dev;
+            needsMigration = true;
+            // 迁移历史/告警文件
+            migrateDeviceFiles(key, dev.rfid);
+            console.log('[MIGRATE] ' + key + ' -> ' + dev.rfid);
+        } else {
+            // 无 RFID: 补充 sourceDeviceId 字段但保留原 key
+            dev.sourceDeviceId = key;
+            migrated[key] = dev;
+            needsMigration = true;
+        }
+    });
+    if (needsMigration) {
+        writeJSON(DEVICES_FILE, migrated);
+        console.log('[MIGRATE] 设备数据迁移完成, ' + Object.keys(migrated).length + ' 设备');
+    }
+}
+
 app.listen(PORT, function() {
     console.log('========================================');
     console.log('  智慧水质监测 - 后端服务 v2 (SDK)');
@@ -529,6 +678,8 @@ app.listen(PORT, function() {
     console.log('  前端: http://localhost:' + PORT);
     console.log('  心跳超时: ' + (heartbeatTimeoutMs / 1000) + 's');
     console.log('========================================');
+    // 启动时自动迁移旧格式数据
+    migrateDevicesIfNeeded();
     // 每 10 秒检查一次客户端心跳超时
     heartbeatCheckInterval = setInterval(heartbeatCleanup, 10000);
 });

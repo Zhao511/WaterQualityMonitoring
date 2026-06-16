@@ -13,10 +13,6 @@ static uint32_t g_lora_heartbeat_last = 0;
 static uint32_t g_lora_bytes_total = 0;
 static uint32_t g_lora_frames_total = 0;
 
-/* ---- 波特率扫描列表 ---- */
-static const uint32_t BAUD_SCAN[] = { LORA_BAUD_RATE, 9600, 19200, 38400, 4800, 14400, 57600, 2400 };
-#define BAUD_SCAN_N (sizeof(BAUD_SCAN) / sizeof(BAUD_SCAN[0]))
-
 /* ================================================================
  * 辅助: 切换串口波特率
  * ================================================================ */
@@ -76,190 +72,53 @@ static bool lora_wait_aux(uint32_t timeout_ms = 2000)
 }
 
 /* ================================================================
- * 初始化
+ * 初始化 — ATK-LORA-01 透传模式
+ * - AT 配置模式 (MD0=HIGH):  波特率固定 115200
+ * - 通信透传模式 (MD0=LOW):  波特率 9600 (出厂默认)
  * ================================================================ */
 void lora_init()
 {
     /* GPIO */
     pinMode(LORA_MD0_PIN, OUTPUT);
-    digitalWrite(LORA_MD0_PIN, HIGH);   /* 配置模式 */
+    digitalWrite(LORA_MD0_PIN, HIGH);   /* 进入 AT 配置模式 */
     pinMode(LORA_AUX_PIN, INPUT_PULLUP);
 
-    /* UART 初始化 */
-    lora_set_baud(LORA_BAUD_RATE);
-    delay(200);
+    /* UART 初始化为 AT 配置波特率 */
+    lora_set_baud(LORA_AT_BAUD_RATE);
+    delay(300);
 
-    DEBUG_SERIAL.printf("[LoRa] Init: baud=%u | MD0=HIGH(cfg) | AUX=GPIO%d(%s)\n",
-                        (unsigned)LORA_BAUD_RATE, LORA_AUX_PIN,
-                        digitalRead(LORA_AUX_PIN) == HIGH ? "HIGH" : "LOW");
+    DEBUG_SERIAL.printf("[LoRa] Init: AT mode | baud=%u | MD0=HIGH\n",
+                        (unsigned)LORA_AT_BAUD_RATE);
 
-    /* === 波特率检测 + 自适应 === */
-    bool at_ok = lora_at("AT", 600);
-
-    if (!at_ok)
-    {
-        /* 扫描其他波特率 */
-        DEBUG_SERIAL.println("[LoRa] Scanning baud rates...");
-        uint32_t found = 0;
-        for (size_t i = 0; i < BAUD_SCAN_N; i++)
-        {
-            if (BAUD_SCAN[i] == LORA_BAUD_RATE) continue;  /* 已试过 */
-            DEBUG_SERIAL.printf("[LoRa]   try %u...", (unsigned)BAUD_SCAN[i]);
-            lora_set_baud(BAUD_SCAN[i]);
-            if (lora_at("AT", 600))
-            {
-                DEBUG_SERIAL.println(" OK!");
-                found = BAUD_SCAN[i];
-                break;
-            }
-            DEBUG_SERIAL.println(" no");
-        }
-
-        if (found)
-        {
-            /* 找到非默认波特率, 强制改回 LORA_BAUD_RATE */
-            DEBUG_SERIAL.printf("[LoRa] Found at %u, resetting to %u...\n",
-                                (unsigned)found, (unsigned)LORA_BAUD_RATE);
-            char cmd[32];
-            snprintf(cmd, sizeof(cmd), "AT+BAUD=%u", (unsigned)LORA_BAUD_RATE);
-            lora_at(cmd, 800);
-            lora_set_baud(LORA_BAUD_RATE);
-            delay(200);
-            at_ok = lora_at("AT", 600);
-        }
-        else
-        {
-            DEBUG_SERIAL.println("[LoRa] ERROR: No response at any baud rate!");
-            DEBUG_SERIAL.println("[LoRa] Check VCC/GND/TX/RX/MD0 wiring.");
-        }
-    }
+    /* 确认模块在线 */
+    bool at_ok = lora_at("AT", 800);
 
     if (at_ok)
     {
-        /* === 诊断: 固件版本 + 帮助 === */
-        lora_at("AT+VER?", 500);
-        lora_at("AT+HELP", 500);
-
-        /* === 查询当前 RF 参数 (不同固件命令名不同) === */
+        /* 查询地址 (ATK-LORA-01 支持的唯一查询命令) */
         lora_at("AT+ADDR?", 500);
-        lora_at("AT+CH?", 500);
-        lora_at("AT+CHANNEL?", 500);
-        lora_at("AT+FREQ?", 500);
-        lora_at("AT+BAND?", 500);
-        lora_at("AT+RATE?", 500);
-        lora_at("AT+RF?", 500);
 
-        /* === 仅在后续配置全部失败时才复位 (避免反复重置已配置好的模块) === */
-        bool need_reset = false;
-
-        /* === 配置地址 === */
-        if (at_ok)
-        {
-            char cmd[32];
-            snprintf(cmd, sizeof(cmd), "AT+ADDR=%d", LORA_DEFAULT_ADDRESS);
-            if (!lora_at(cmd, 800))
-            {
-                snprintf(cmd, sizeof(cmd), "AT+ADDR=%02X", LORA_DEFAULT_ADDRESS);
-                if (!lora_at(cmd, 800)) need_reset = true;
-            }
-        }
-
-        /* === 配置信道 (只尝试有响应的命令) === */
-        if (at_ok)
-        {
-            char cmd[32];
-            snprintf(cmd, sizeof(cmd), "AT+CH=%d", LORA_DEFAULT_CHANNEL);
-            bool ch_ok = lora_at(cmd, 800);
-
-            if (!ch_ok) {
-                snprintf(cmd, sizeof(cmd), "AT+CHANNEL=%d", LORA_DEFAULT_CHANNEL);
-                ch_ok = lora_at(cmd, 800);
-            }
-            if (!ch_ok) {
-                snprintf(cmd, sizeof(cmd), "AT+RF=%d", LORA_DEFAULT_CHANNEL);
-                ch_ok = lora_at(cmd, 800);
-            }
-            if (!ch_ok) {
-                snprintf(cmd, sizeof(cmd), "AT+FREQ=%d", LORA_DEFAULT_CHANNEL);
-                if (!lora_at(cmd, 800)) need_reset = true;
-            }
-        }
-
-        /* === 仅在地址/信道配置全部失败时才出厂复位 === */
-        if (need_reset && at_ok) {
-            DEBUG_SERIAL.println("[LoRa] Address/Channel config failed, trying factory reset...");
-            bool reset_ok = lora_at("AT+RESET", 1000);
-            if (!reset_ok) reset_ok = lora_at("AT+RELOAD", 1000);
-            if (!reset_ok) reset_ok = lora_at("AT+RENEW", 1000);
-            if (!reset_ok) reset_ok = lora_at("AT+DEFAULT", 1000);
-            if (!reset_ok) reset_ok = lora_at("AT+RESTORE", 1000);
-
-            if (reset_ok) {
-                DEBUG_SERIAL.println("[LoRa] Factory reset OK, re-detecting baud...");
-                delay(1000);
-                lora_set_baud(9600);
-                delay(300);
-                at_ok = lora_at("AT", 600);
-                if (!at_ok) {
-                    lora_set_baud(LORA_BAUD_RATE);
-                    delay(300);
-                    at_ok = lora_at("AT", 600);
-                }
-                /* 复位后重新配置地址和信道 */
-                if (at_ok) {
-                    char cmd[32];
-                    snprintf(cmd, sizeof(cmd), "AT+ADDR=%d", LORA_DEFAULT_ADDRESS);
-                    if (!lora_at(cmd, 800)) {
-                        snprintf(cmd, sizeof(cmd), "AT+ADDR=%02X", LORA_DEFAULT_ADDRESS);
-                        lora_at(cmd, 800);
-                    }
-                    snprintf(cmd, sizeof(cmd), "AT+CH=%d", LORA_DEFAULT_CHANNEL);
-                    if (!lora_at(cmd, 800)) {
-                        snprintf(cmd, sizeof(cmd), "AT+CHANNEL=%d", LORA_DEFAULT_CHANNEL);
-                        if (!lora_at(cmd, 800)) {
-                            snprintf(cmd, sizeof(cmd), "AT+RF=%d", LORA_DEFAULT_CHANNEL);
-                            lora_at(cmd, 800);
-                        }
-                    }
-                }
-            }
-        }
-
-        /* === 显式配置空中速率, 确保两端一致 (默认 2.4kbps) === */
-        if (at_ok) {
-            /* ATK-LORA-01: AT+RATE=<0~5> (0=0.3k, 1=1.2k, 2=2.4k, 3=4.8k, 4=9.6k, 5=19.2k) */
-            if (!lora_at("AT+RATE=2", 800)) {
-                /* E220 兼容格式: AT+PARAM=<SF>,<BW>,<CR>,<preamble> */
-                lora_at("AT+PARAM=9,7,1,8", 800);
-            }
-        }
-
-        /* === 最终确认 === */
-        lora_at("AT+ADDR?", 500);
-        lora_at("AT+CH?", 500);
-        lora_at("AT+RATE?", 500);
+        DEBUG_SERIAL.println("[LoRa] Module online, address=0 (default)");
+    }
+    else
+    {
+        DEBUG_SERIAL.println("[LoRa] WARN: AT no response at 115200 baud");
+        DEBUG_SERIAL.println("[LoRa] Check VCC/GND/TX/RX/MD0 wiring");
     }
 
-    /* === 切回透传模式 === */
+    /* 切回透传模式 (MD0=LOW), 波特率 9600 */
     delay(50);
     digitalWrite(LORA_MD0_PIN, LOW);
     delay(300);
+    lora_set_baud(LORA_BAUD_RATE);
     lora_wait_aux(3000);
 
-    int aux = digitalRead(LORA_AUX_PIN);
     DEBUG_SERIAL.printf("[LoRa] Transparent mode | baud=%u | AUX=%s\n",
                         (unsigned)LORA_BAUD_RATE,
-                        aux == HIGH ? "HIGH-ready" : "LOW?!");
-    if (aux != HIGH)
-    {
-        DEBUG_SERIAL.println("[LoRa] NOTE: AUX stays LOW in transparent mode — ");
-        DEBUG_SERIAL.println("[LoRa]   this is normal if the paired module is transmitting.");
-        DEBUG_SERIAL.println("[LoRa]   Data can still be received on UART.");
-    }
+                        digitalRead(LORA_AUX_PIN) == HIGH ? "HIGH" : "LOW");
 
     g_lora_heartbeat_last = millis();
-    DEBUG_SERIAL.printf("[LoRa] addr=%d channel=%d — listening...\n",
-                        LORA_DEFAULT_ADDRESS, LORA_DEFAULT_CHANNEL);
+    DEBUG_SERIAL.println("[LoRa] Listening for STM32 data...");
 }
 
 /* ================================================================

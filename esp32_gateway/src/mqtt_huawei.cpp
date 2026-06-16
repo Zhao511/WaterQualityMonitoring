@@ -107,6 +107,21 @@ static bool wifi_connect()
 {
     if (WiFi.status() == WL_CONNECTED) return true;
 
+    /* 扫描周围 WiFi (诊断: 排查 NO_AP_FOUND) */
+    DEBUG_SERIAL.println("[WiFi] Scanning...");
+    int n = WiFi.scanNetworks();
+    DEBUG_SERIAL.printf("[WiFi] Found %d networks:\n", n);
+    for (int i = 0; i < n; i++) {
+        DEBUG_SERIAL.printf("  %2d: %-25s  CH=%2d  RSSI=%d%s\n",
+                            i + 1,
+                            WiFi.SSID(i).c_str(),
+                            WiFi.channel(i),
+                            WiFi.RSSI(i),
+                            WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "" : " *");
+    }
+    DEBUG_SERIAL.println("[WiFi] Scan done.");
+    WiFi.scanDelete();
+
     DEBUG_SERIAL.print("[WiFi] Connecting to ");
     DEBUG_SERIAL.print(WIFI_SSID);
 
