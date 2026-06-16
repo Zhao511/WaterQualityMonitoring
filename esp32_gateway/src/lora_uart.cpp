@@ -58,12 +58,13 @@ static bool lora_at(const char *cmd, uint32_t timeout_ms = 600)
 }
 
 /* ================================================================
- * 辅助: 等待 AUX=HIGH
+ * 辅助: 等待 AUX=LOW (空闲)
+ * ATK-LORA-01: AUX LOW=空闲, HIGH=忙
  * ================================================================ */
 static bool lora_wait_aux(uint32_t timeout_ms = 2000)
 {
     uint32_t t0 = millis();
-    while (digitalRead(LORA_AUX_PIN) != HIGH)
+    while (digitalRead(LORA_AUX_PIN) != LOW)
     {
         if (millis() - t0 > timeout_ms) return false;
         delay(10);
@@ -72,28 +73,33 @@ static bool lora_wait_aux(uint32_t timeout_ms = 2000)
 }
 
 /* ================================================================
- * 初始化 — ATK-LORA-01 透传模式
- * - 模块波特率固定 115200 (AT+BAUD 无效, 全程 115200)
- * - STM32 侧 LORA_BAUD_RATE=9600, 两端 UART 波特率不同不影响 RF
+ * 初始化 — 正点原子 ATK-LORA-01 透传模式
+ * - 模块波特率出厂默认 115200, 全程不切换
+ * - 两端一致 LORA_BAUD_RATE=115200 (STM32 侧 lora.h 同步)
  * ================================================================ */
 void lora_init()
 {
     /* GPIO */
     pinMode(LORA_MD0_PIN, OUTPUT);
     digitalWrite(LORA_MD0_PIN, HIGH);   /* 进入 AT 配置模式 */
-    pinMode(LORA_AUX_PIN, INPUT_PULLUP);
+    pinMode(LORA_AUX_PIN, INPUT_PULLDOWN);
 
-    /* UART 115200 (模块固定, 全程不切换) */
+    /* UART 115200 (出厂默认, 全程不切换) */
     lora_set_baud(LORA_BAUD_RATE);
     delay(300);
 
     DEBUG_SERIAL.printf("[LoRa] Init: AT mode | baud=%u | MD0=HIGH\n",
                         (unsigned)LORA_BAUD_RATE);
 
-    /* 确认模块在线 + 查询地址 */
+    /* 确认模块在线 + 配置 RF 参数 (V3.0 指令, 与 STM32 侧一致) */
     if (lora_at("AT", 800)) {
+        lora_at("AT+ADDR=00,00");
+        lora_at("AT+WLRATE=2,0");
+        lora_at("AT+TPOWER=3");
+        lora_at("AT+UART=7,0");
+        lora_at("AT+FLASH");
         lora_at("AT+ADDR?", 500);
-        DEBUG_SERIAL.println("[LoRa] Module online");
+        DEBUG_SERIAL.println("[LoRa] Module online, RF params configured (V3.0)");
     } else {
         DEBUG_SERIAL.println("[LoRa] WARN: AT no response, check wiring");
     }
@@ -104,9 +110,9 @@ void lora_init()
     delay(300);
     lora_wait_aux(3000);
 
-    DEBUG_SERIAL.printf("[LoRa] Transparent mode | baud=%u | AUX=%s\n",
+    DEBUG_SERIAL.printf("[LoRa] Transparent mode | baud=%u | AUX=%s (LOW=ready, HIGH=busy)\n",
                         (unsigned)LORA_BAUD_RATE,
-                        digitalRead(LORA_AUX_PIN) == HIGH ? "HIGH" : "LOW");
+                        digitalRead(LORA_AUX_PIN) == LOW ? "LOW(ready)" : "HIGH(busy)");
 
     g_lora_heartbeat_last = millis();
     DEBUG_SERIAL.println("[LoRa] Listening for STM32 data...");

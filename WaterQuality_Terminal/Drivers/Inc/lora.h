@@ -21,15 +21,16 @@
 #define LORA_MD0_PORT     GPIOA
 #define LORA_MD0_RCC      RCC_APB2Periph_GPIOA
 
-/* AUX: 模块忙指示 (PB12) — LOW=忙, HIGH=空闲 */
+/* AUX: 模块忙指示 (PB12) — LOW=空闲, HIGH=忙 */
 #define LORA_AUX_PIN      GPIO_Pin_12
 #define LORA_AUX_PORT     GPIOB
 #define LORA_AUX_RCC      RCC_APB2Periph_GPIOB
 
 /* 默认 LoRa 参数 (与 ESP32 侧一致) */
-#define LORA_BAUD_RATE         115200
+#define LORA_BAUD_RATE         115200  /* ATK-LORA-01 出厂默认, 模块固定 */
 #define LORA_DEFAULT_ADDRESS   0
 #define LORA_DEFAULT_CHANNEL   0      /* 433MHz (ATK-LORA-01 默认) */
+#define LORA_DEFAULT_RATE      2      /* 2.4kbps (ATK-LORA-01 默认) */
 
 /* AUX 超时 (ms) — 等待模块就绪的最长时间 */
 #define LORA_AUX_TIMEOUT_MS    500

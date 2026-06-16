@@ -44,7 +44,7 @@ void LoRa_SetMode(uint8_t mode)
  */
 uint8_t LoRa_AuxReady(void)
 {
-    return ((LORA_AUX_PORT->IDR & LORA_AUX_PIN) != 0) ? 1 : 0;
+    return ((LORA_AUX_PORT->IDR & LORA_AUX_PIN) == 0) ? 1 : 0;
 }
 
 /**
@@ -129,19 +129,45 @@ uint16_t RingBuffer_Read(RingBuffer *rb, uint8_t *buffer, uint16_t max_length)
 
 /**
  * @brief  向 LoRa 模块发送 AT 指令 (配置模式下使用)
+ *
+ * ATK-LORA-01 配置模式 AUX 时序 (正点原子官方手册):
+ *   发送\r\n → AUX变HIGH(忙) → 模块处理 → 发响应 → AUX变LOW(空闲)
+ *
+ * 关键: 发送后必须先等 AUX=HIGH (进入忙碌), 再等 AUX=LOW (响应就绪)
+ *       跳过HIGH等待会导致过早读取, 响应为空的时序bug
+ *
  * @return 0=成功, 非0=超时或无响应
  */
 static int LoRa_SendAT(const char *cmd, char *resp, uint16_t resp_max)
 {
-    /* 等待模块空闲 */
+    /* 1. 清空接收缓冲 (避免读到上一条指令的残留回显) */
+    {
+        uint8_t dummy[LORA_BUFFER_SIZE];
+        LoRa_ReceiveData(dummy, sizeof(dummy));
+    }
+
+    /* 2. 等待模块空闲 (AUX=LOW) */
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
-    /* 发送 AT 指令 */
+    /* 3. 发送 AT 指令 */
     uint16_t len = (uint16_t)strlen(cmd);
     LoRa_SendData((uint8_t *)cmd, len);
 
-    /* 等待响应 */
+    /* 4. 等待模块开始处理 (AUX=HIGH)
+     *    ATK-LORA-01 收到完整 \r\n 后 AUX 变高, 表示忙
+     *    超时 200ms 防止模块异常时死等 */
+    {
+        uint32_t elapsed = 0;
+        while (LoRa_AuxReady() && elapsed < 200) {
+            Lora_DelayMs(1);
+            elapsed++;
+        }
+    }
+
+    /* 5. 等待模块处理完成 (AUX=LOW), 响应就绪 */
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
+
+    /* 6. 读取响应 (包含模块回显 + 实际响应) */
     uint16_t rlen = LoRa_ReceiveData((uint8_t *)resp, resp_max - 1);
     if (rlen > 0) {
         resp[rlen] = '\0';
@@ -151,37 +177,24 @@ static int LoRa_SendAT(const char *cmd, char *resp, uint16_t resp_max)
 }
 
 /**
- * @brief  重新配置 USART3 波特率 (不改变其他参数)
- */
-static void LoRa_USART_SetBaud(uint32_t baud)
-{
-    USART_Cmd(LORA_USART, DISABLE);
-    USART_InitTypeDef USART_InitStructure;
-    USART_InitStructure.USART_BaudRate            = baud;
-    USART_InitStructure.USART_WordLength          = USART_WordLength_8b;
-    USART_InitStructure.USART_StopBits            = USART_StopBits_1;
-    USART_InitStructure.USART_Parity              = USART_Parity_No;
-    USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-    USART_InitStructure.USART_Mode                = USART_Mode_Rx | USART_Mode_Tx;
-    USART_Init(LORA_USART, &USART_InitStructure);
-    USART_Cmd(LORA_USART, ENABLE);
-}
-
-/**
  * @brief  初始化 LoRa 模块 (USART3 + MD0/AUX + 参数配置)
  *
- * 流程:
- *   1. GPIO / USART 初始化, 先用 9600 与模块通信 (出厂默认波特率)
- *   2. 若 9600 无响应则尝试 LORA_BAUD_RATE
- *   3. 发送 AT+BAUD 切换到目标波特率
- *   4. 配置地址 / 信道
- *   5. 进入透传模式
+ * 流程 (正点原子 ATK-LORA-01 V3.0 固件):
+ *   1. GPIO / USART3 直接使用 LORA_BAUD_RATE (115200, ATK-LORA-01 出厂默认)
+ *   2. MD0=HIGH 进入配置模式, 等待 >=300ms 稳定, 等待 AUX=LOW
+ *   3. AT 连通性测试
+ *   4. AT+ADDR / AT+WLRATE / AT+TPOWER / AT+UART — V3.0 标准 AT 指令
+ *   5. AT+FLASH 保存参数
+ *   6. MD0=LOW 回到透传模式
+ *
+ * V3.0 关键差异: 功率编号相反 (3=20dBm), WLRATE 合并速率+信道, ADDR 十六进制逗号格式
  */
 void LoRa_Init(void)
 {
     GPIO_InitTypeDef  GPIO_InitStructure;
     USART_InitTypeDef USART_InitStructure;
     NVIC_InitTypeDef  NVIC_InitStructure;
+    char              at_resp[32];
 
     Debug_Printf("[LoRa] Init start\r\n");
 
@@ -207,13 +220,13 @@ void LoRa_Init(void)
     GPIO_Init(LORA_MD0_PORT, &GPIO_InitStructure);
     GPIO_ResetBits(LORA_MD0_PORT, LORA_MD0_PIN);
 
-    /* ---- AUX: PB12 (上拉输入) ---- */
+    /* ---- AUX: PB12 (下拉输入) ---- */
     GPIO_InitStructure.GPIO_Pin  = LORA_AUX_PIN;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD;
     GPIO_Init(LORA_AUX_PORT, &GPIO_InitStructure);
 
-    /* ---- USART3: 先用出厂默认 9600 ---- */
-    USART_InitStructure.USART_BaudRate            = 9600;
+    /* ---- USART3: 直接使用 LORA_BAUD_RATE (ATK-LORA-01 出厂默认 115200) ---- */
+    USART_InitStructure.USART_BaudRate            = LORA_BAUD_RATE;
     USART_InitStructure.USART_WordLength          = USART_WordLength_8b;
     USART_InitStructure.USART_StopBits            = USART_StopBits_1;
     USART_InitStructure.USART_Parity              = USART_Parity_No;
@@ -235,112 +248,64 @@ void LoRa_Init(void)
     RingBuffer_Init(&lora_rb);
 
     /* 等待模块上电稳定 */
-    Debug_Printf("[LoRa] GPIO+USART3 ready, waiting module power-on...\r\n");
+    Debug_Printf("[LoRa] GPIO+USART3 ready (baud=%lu), waiting module power-on...\r\n",
+                 (uint32_t)LORA_BAUD_RATE);
     Lora_DelayMs(300);
 
     /* ================================================================
-     * 波特率自适应: 找到模块当前波特率, 然后切换到 LORA_BAUD_RATE
+     * 进入配置模式 (MD0=HIGH), 等待模块就绪
+     * 正点原子教程: MD0 切换后需 >=300ms 稳定时间
      * ================================================================ */
-    uint32_t current_baud = 0;
-    char     at_resp[32];
-
-    /* 波特率扫描列表 (常见速率, 出厂默认 9600 优先) */
-    static const uint32_t baud_list[] = {
-        9600, 115200, 19200, 38400, 4800, 57600, 2400, 14400
-    };
-    const size_t baud_count = sizeof(baud_list) / sizeof(baud_list[0]);
-
-    /* 进入配置模式 (MD0=HIGH) */
     LoRa_SetMode(1);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
-    /* 扫描波特率 */
-    Debug_Printf("[LoRa] Scanning baud rate...\r\n");
-    for (size_t i = 0; i < baud_count; i++)
-    {
-        LoRa_USART_SetBaud(baud_list[i]);
-        Lora_DelayMs(80);
-        if (LoRa_SendAT("AT\r\n", at_resp, sizeof(at_resp)) == 0)
-        {
-            current_baud = baud_list[i];
-            Debug_Printf("[LoRa] Found baud: %lu\r\n", current_baud);
-            break;
-        }
-    }
-
-    /* 如果找到的波特率不是目标波特率, 发送 AT+BAUD 切换 */
-    if (current_baud != 0 && current_baud != LORA_BAUD_RATE)
-    {
-        Debug_Printf("[LoRa] Switching baud %lu -> %lu\r\n", current_baud, (uint32_t)LORA_BAUD_RATE);
-        char at_cmd[20];
-        snprintf(at_cmd, sizeof(at_cmd), "AT+BAUD=%d\r\n", LORA_BAUD_RATE);
-        LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
-        LoRa_USART_SetBaud(LORA_BAUD_RATE);
-        Lora_DelayMs(100);
-    }
-    else if (current_baud == 0)
-    {
-        /* 所有波特率都失败, 回退到 LORA_BAUD_RATE 继续 (模块可能异常) */
-        Debug_Printf("[LoRa] WARN: no baud found, fallback to %lu\r\n", (uint32_t)LORA_BAUD_RATE);
-        LoRa_USART_SetBaud(LORA_BAUD_RATE);
-        Lora_DelayMs(100);
+    /* ================================================================
+     * AT 连通性测试
+     * ================================================================ */
+    if (LoRa_SendAT("AT\r\n", at_resp, sizeof(at_resp)) == 0) {
+        Debug_Printf("[LoRa] AT resp: %s\r\n", at_resp);
+    } else {
+        Debug_Printf("[LoRa] WARN: AT no response, check wiring\r\n");
     }
 
     /* ================================================================
-     * 配置参数 (在当前波特率下, 尝试多种 AT 指令格式)
+     * 配置参数 — ATK-LORA-01 V3.0 标准 AT 指令
+     * WLRATE=<rate>,<ch>  TPOWER 3=20dBm  ADDR 十六进制逗号
      * ================================================================ */
     {
-        LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
+        char at_cmd[24];
 
-        /* 地址 — 十进制和十六进制都尝试 */
-        {
-            char at_cmd[20];
-            snprintf(at_cmd, sizeof(at_cmd), "AT+ADDR=%d\r\n", LORA_DEFAULT_ADDRESS);
-            if (LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp)) != 0)
-            {
-                snprintf(at_cmd, sizeof(at_cmd), "AT+ADDR=%02X\r\n", LORA_DEFAULT_ADDRESS);
-                LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
-            }
-        }
+        /* 地址 (十六进制逗号格式, V3.0 标准) */
+        snprintf(at_cmd, sizeof(at_cmd), "AT+ADDR=%02X,%02X\r\n",
+                 (LORA_DEFAULT_ADDRESS >> 8) & 0xFF, LORA_DEFAULT_ADDRESS & 0xFF);
+        LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
 
-        /* 信道 — 多种命令名和格式 */
-        {
-            char at_cmd[20];
-            snprintf(at_cmd, sizeof(at_cmd), "AT+CH=%d\r\n", LORA_DEFAULT_CHANNEL);
-            if (LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp)) != 0)
-            {
-                snprintf(at_cmd, sizeof(at_cmd), "AT+CHANNEL=%d\r\n", LORA_DEFAULT_CHANNEL);
-                if (LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp)) != 0)
-                {
-                    snprintf(at_cmd, sizeof(at_cmd), "AT+CHANNEL=%02X\r\n", LORA_DEFAULT_CHANNEL);
-                    LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
-                }
-            }
-        }
+        /* 空中速率+信道: WLRATE=2,0 (2.4kbps, CH0) */
+        snprintf(at_cmd, sizeof(at_cmd), "AT+WLRATE=%d,%d\r\n",
+                 LORA_DEFAULT_RATE, LORA_DEFAULT_CHANNEL);
+        LoRa_SendAT(at_cmd, at_resp, sizeof(at_resp));
+
+        /* 发射功率: TPOWER=3 (20dBm, V3.0 中 3=最大) */
+        LoRa_SendAT("AT+TPOWER=3\r\n", at_resp, sizeof(at_resp));
+
+        /* 透传串口: UART=7,0 (115200 8N1) */
+        LoRa_SendAT("AT+UART=7,0\r\n", at_resp, sizeof(at_resp));
+
+        /* 保存到 Flash */
+        LoRa_SendAT("AT+FLASH\r\n", at_resp, sizeof(at_resp));
 
         /* 查询确认 */
         LoRa_SendAT("AT+ADDR?\r\n", at_resp, sizeof(at_resp));
         Debug_Printf("[LoRa] ADDR? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
-        LoRa_SendAT("AT+CH?\r\n", at_resp, sizeof(at_resp));
-        Debug_Printf("[LoRa] CH? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
-
-        /* 显式配置空中速率, 确保两端一致 (默认 2.4kbps)
-         * ATK-LORA-01: AT+RATE=<0~5> (2=2.4kbps)
-         * E220 兼容: AT+PARAM=<SF>,<BW>,<CR>,<preamble> (9=SF9,7=125kHz,1=4/5,8=前导8) */
-        Debug_Printf("[LoRa] Config air rate...\r\n");
-        if (LoRa_SendAT("AT+RATE=2\r\n", at_resp, sizeof(at_resp)) != 0) {
-            LoRa_SendAT("AT+PARAM=9,7,1,8\r\n", at_resp, sizeof(at_resp));
-        }
-        LoRa_SendAT("AT+RATE?\r\n", at_resp, sizeof(at_resp));
-        Debug_Printf("[LoRa] RATE? resp: %s\r\n", at_resp[0] ? at_resp : "(no response)");
     }
 
     /* ================================================================
      * 回到透传模式 (MD0=LOW)
+     * 正点原子教程: MD0 切换后需 >=300ms 稳定时间
      * ================================================================ */
     LoRa_SetMode(0);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
     Debug_Printf("[LoRa] Init done, transparent mode\r\n");
 }
@@ -398,20 +363,32 @@ uint16_t LoRa_ReceiveData(uint8_t *buffer, uint16_t max_length)
  */
 void LoRa_SetAddress(uint8_t address)
 {
-    /* 切换到配置模式 */
+    /* 切换到配置模式, 等 300ms 稳定 (正点原子教程) */
     LoRa_SetMode(1);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
     /* 发送 AT 指令 */
     char cmd[16];
-    snprintf(cmd, sizeof(cmd), "AT+ADDR=%d\r\n", address);
+    snprintf(cmd, sizeof(cmd), "AT+ADDR=%02X,%02X\r\n",
+             (address >> 8) & 0xFF, address & 0xFF);
     LoRa_SendData((uint8_t *)cmd, (uint16_t)strlen(cmd));
+
+    /* 等待模块开始处理 (AUX=HIGH), 超时 200ms */
+    {
+        uint32_t elapsed = 0;
+        while (LoRa_AuxReady() && elapsed < 200) {
+            Lora_DelayMs(1);
+            elapsed++;
+        }
+    }
+
+    /* 等待模块处理完成 (AUX=LOW) */
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
-    /* 切回透传模式 */
+    /* 切回透传模式, 等 300ms 稳定 */
     LoRa_SetMode(0);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 }
 
@@ -420,20 +397,31 @@ void LoRa_SetAddress(uint8_t address)
  */
 void LoRa_SetChannel(uint8_t channel)
 {
-    /* 切换到配置模式 */
+    /* 切换到配置模式, 等 300ms 稳定 (正点原子教程) */
     LoRa_SetMode(1);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
     /* 发送 AT 指令 */
     char cmd[16];
-    snprintf(cmd, sizeof(cmd), "AT+CHANNEL=%d\r\n", channel);
+    snprintf(cmd, sizeof(cmd), "AT+WLRATE=%d,%d\r\n", LORA_DEFAULT_RATE, channel);
     LoRa_SendData((uint8_t *)cmd, (uint16_t)strlen(cmd));
+
+    /* 等待模块开始处理 (AUX=HIGH), 超时 200ms */
+    {
+        uint32_t elapsed = 0;
+        while (LoRa_AuxReady() && elapsed < 200) {
+            Lora_DelayMs(1);
+            elapsed++;
+        }
+    }
+
+    /* 等待模块处理完成 (AUX=LOW) */
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
-    /* 切回透传模式 */
+    /* 切回透传模式, 等 300ms 稳定 */
     LoRa_SetMode(0);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 }
 
@@ -448,28 +436,44 @@ int LoRa_SendATCmd(const char *cmd, char *resp, uint16_t resp_max)
 {
     int ret = -1;
 
-    /* 切换到配置模式 */
+    /* 1. 清空接收缓冲 (避免读到上一条指令的残留回显) */
+    {
+        uint8_t dummy[LORA_BUFFER_SIZE];
+        LoRa_ReceiveData(dummy, sizeof(dummy));
+    }
+
+    /* 2. 进入配置模式, 等 300ms 稳定 (正点原子教程) */
     LoRa_SetMode(1);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
-    /* 发送 AT 指令 */
+    /* 3. 发送 AT 指令 + \r\n */
     uint16_t len = (uint16_t)strlen(cmd);
     LoRa_SendData((uint8_t *)cmd, len);
     LoRa_SendData((uint8_t *)"\r\n", 2);
 
-    /* 等待响应 */
+    /* 4. 等待模块开始处理 (AUX=HIGH), 超时 200ms 防止死等 */
+    {
+        uint32_t elapsed = 0;
+        while (LoRa_AuxReady() && elapsed < 200) {
+            Lora_DelayMs(1);
+            elapsed++;
+        }
+    }
+
+    /* 5. 等待模块处理完成 (AUX=LOW), 响应就绪 */
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
-    Lora_DelayMs(50);
+
+    /* 6. 读取响应 */
     uint16_t rlen = LoRa_ReceiveData((uint8_t *)resp, resp_max - 1);
     if (rlen > 0) {
         resp[rlen] = '\0';
         ret = 0;
     }
 
-    /* 切回透传模式 */
+    /* 7. 回到透传模式, 等 300ms 稳定 */
     LoRa_SetMode(0);
-    Lora_DelayMs(50);
+    Lora_DelayMs(300);
     LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);
 
     return ret;

@@ -616,7 +616,8 @@ int main(void)
 
     Debug_Printf("[INIT] LoRa... (AT scan, may take seconds)\r\n");
     LoRa_Init();
-    Debug_Printf("[INIT] LoRa OK\r\n");
+    Debug_Printf("[INIT] LoRa OK | AUX=%s (LOW=ready, HIGH=busy)\r\n", 
+                LoRa_AuxReady() ? "LOW(ready)" : "HIGH(busy)");
 
     Debug_Printf("[INIT] RC522...\r\n");
     RC522_Init();

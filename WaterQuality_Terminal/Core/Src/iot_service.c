@@ -427,34 +427,20 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
             char at_cmd[32], at_resp[32];
             bool all_ok = true;
 
-            /* 频率: 尝试 AT+FREQ 和 AT+CHANNEL */
-            if (freq > 0) {
-                snprintf(at_cmd, sizeof(at_cmd), "AT+FREQ=%d", freq);
-                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
-                    snprintf(at_cmd, sizeof(at_cmd), "AT+CH=%d", freq);
-                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
-                        all_ok = false;
-                }
+            /* 空中速率+信道: AT+WLRATE=<rate>,<ch> (V3.0 合并指令) */
+            if ((freq > 0 || sf > 0) && all_ok) {
+                int rate = (sf > 0) ? sf : LORA_DEFAULT_RATE;
+                int ch   = (freq > 0) ? freq : LORA_DEFAULT_CHANNEL;
+                snprintf(at_cmd, sizeof(at_cmd), "AT+WLRATE=%d,%d", rate, ch);
+                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
+                    all_ok = false;
             }
 
-            /* 扩频因子 */
-            if (sf > 0 && all_ok) {
-                snprintf(at_cmd, sizeof(at_cmd), "AT+SF=%d", sf);
-                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
-                    snprintf(at_cmd, sizeof(at_cmd), "AT+RATE=%d", sf);
-                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
-                        all_ok = false;
-                }
-            }
-
-            /* 发射功率 */
+            /* 发射功率: AT+TPOWER (V3.0: 3=20dBm) */
             if (power > 0 && all_ok) {
-                snprintf(at_cmd, sizeof(at_cmd), "AT+POWER=%d", power);
-                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0) {
-                    snprintf(at_cmd, sizeof(at_cmd), "AT+TXPOWER=%d", power);
-                    if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
-                        all_ok = false;
-                }
+                snprintf(at_cmd, sizeof(at_cmd), "AT+TPOWER=%d", power);
+                if (LoRa_SendATCmd(at_cmd, at_resp, sizeof(at_resp)) != 0)
+                    all_ok = false;
             }
 
             Debug_Printf("IOT: LoRa params freq=%d sf=%d power=%d -- %s\r\n",

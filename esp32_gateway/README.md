@@ -3,7 +3,7 @@
 ## 架构
 
 ```
-STM32F103 ←──LoRa(E220 9600)──→ ESP32 ←──WiFi/MQTT──→ 华为云IoT
+STM32F103 ←──LoRa(ATK-LORA-01 115200)──→ ESP32 ←──WiFi/MQTT──→ 华为云IoT
  (采集+报警)                    (协议转换)              (物模型)
 ```
 
@@ -66,14 +66,13 @@ platformio run --target upload --target monitor
 ### 4. 硬件接线
 
 ```
-ESP32           LoRa E220
-GPIO16 (RX2) ─── TX
-GPIO17 (TX2) ─── RX
-3.3V        ─── VCC
-GND         ─── GND
-GPIO18      ─── AUX  (可选)
-GPIO19      ─── M0   (可选)
-GPIO21      ─── M1   (可选)
+ESP32              ATK-LORA-01
+GPIO25 (TX2)  ─── RXD
+GPIO26 (RX2)  ─── TXD
+3.3V          ─── VCC
+GND           ─── GND
+GPIO35        ─── AUX
+GPIO32        ─── MD0
 ```
 
 ### 5. 验证
@@ -84,7 +83,7 @@ GPIO21      ─── M1   (可选)
  ESP32 LoRa Gateway for Huawei Cloud IoT
  STM32 <--LoRa--> ESP32 <--MQTT--> Cloud
 ========================================
-[LoRa] UART initialized, 9600-8N1, transparent mode
+[LoRa] UART initialized, 115200-8N1, transparent mode
 [WiFi] Connecting to xxx... OK
 [WiFi] IP: 192.168.1.100
 [NTP] Time syncing...

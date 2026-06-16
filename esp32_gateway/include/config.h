@@ -40,7 +40,7 @@
  * LoRa 模块 (正点原子 ATK-LORA-01) — 与 STM32 侧配对
  * ================================================================ */
 #define LORA_SERIAL         Serial2     /* UART2 */
-#define LORA_BAUD_RATE      115200      /* 模块固定 115200 (AT+BAUD 无效) */
+#define LORA_BAUD_RATE      115200      /* 模块出厂默认 115200 */
 #define LORA_RX_PIN         26          /* GPIO26 ← 模块 TXD */
 #define LORA_TX_PIN         25          /* GPIO25 → 模块 RXD */
 #define LORA_AUX_PIN        35          /* GPIO35 ← 模块 AUX (仅输入, 状态指示) */
