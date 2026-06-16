@@ -25,11 +25,11 @@ if (!fs.existsSync(DEVICES_FILE)) fs.writeFileSync(DEVICES_FILE, JSON.stringify(
 
 // ==================== 华为云配置 ====================
 var hwConfig = {
-    ak: '',
-    sk: '',
-    projectId: '',
+    ak: 'YOUR_AK',
+    sk: 'YOUR_SK',
+    projectId: 'YOUR_PROJECT_ID',
     productId: 'YOUR_PRODUCT_ID',    /* TODO: 华为云产品ID */
-    endpoint: 'https://YOUR_INSTANCE_ID.st1.iotda-app.cn-south-1.myhuaweicloud.com'  /* TODO */
+    endpoint: 'YOUR_IOTDA_ENDPOINT'  /* TODO */
 };
 // 物模型属性映射（按服务组织，IoTDA属性名 --> 系统内部字段）
 var SERVICE_PROPS = {
