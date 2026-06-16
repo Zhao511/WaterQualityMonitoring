@@ -29,7 +29,9 @@ float Temp_Sensor_Read(void)
 /**
  * @brief  根据 ADC 值计算温度
  * @param  adc_value: 12-bit ADC 采样值
- * @return 温度值 (°C)
+ * @return 温度值 (°C)，异常时返回 sentinel 值:
+ *         -99.0 = NTC 开路 (Vout ≈ VREF)
+ *         +99.0 = NTC 短路 (Vout ≈ GND)
  * @note   NTC 热敏电阻分压法
  *         R_ntc = R_pullup * Vout / (Vref - Vout)
  *         T(K) = 1 / (1/T0 + ln(R/R0)/B)
@@ -39,14 +41,26 @@ float Temp_Sensor_Calculate(uint16_t adc_value)
 {
     float voltage = (float)adc_value * ADC_VREF / ADC_RESOLUTION;
 
-    /* 防止除零 */
-    if (voltage >= ADC_VREF)
+    /* 开路检测: Vout > 99% VREF → NTC 断开 → 返回故障标记 */
+    if (voltage >= ADC_VREF * 0.99f)
     {
-        voltage = ADC_VREF - 0.001f;
+        return -99.0f;  /* Sentinel: 传感器开路故障 */
+    }
+
+    /* 短路检测: Vout < 1% VREF → NTC 短路 → 返回故障标记 */
+    if (voltage <= ADC_VREF * 0.01f)
+    {
+        return 99.0f;   /* Sentinel: 传感器短路故障 */
     }
 
     float ntc_resistance = NTC_R_PULLUP * voltage / (ADC_VREF - voltage);
     float temperature_k = 1.0f / (1.0f / TEMP_REF_K
                           + logf(ntc_resistance / NTC_R25) / NTC_B_VALUE);
-    return temperature_k - 273.15f; /* 开尔文 → 摄氏度 */
+    float temp_c = temperature_k - 273.15f; /* 开尔文 → 摄氏度 */
+
+    /* 末级钳位: NTC 物理极限范围，防止浮点异常值 */
+    if (temp_c < -40.0f) temp_c = -40.0f;
+    if (temp_c > 125.0f) temp_c = 125.0f;
+
+    return temp_c;
 }

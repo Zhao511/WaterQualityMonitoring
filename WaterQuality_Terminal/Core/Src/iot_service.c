@@ -310,6 +310,64 @@ float IOT_Apply_Calibration(const char *sensor, float raw)
 }
 
 /* ================================================================
+ * 传感器数据验证 — 物理范围检查 + 异常时回退安全值
+ * ================================================================ */
+bool IOT_Validate_SensorData(const char *sensor, float raw, float *clamped)
+{
+    if (!sensor || !clamped) return false;
+
+    bool valid = true;
+
+    if (strcmp(sensor, "ph") == 0) {
+        if (raw < IOT_PH_VALID_MIN || raw > IOT_PH_VALID_MAX) {
+            Debug_Printf("[Sensor] WARN: pH=%.2f out of range [%.1f,%.1f], clamped to %.1f\r\n",
+                         raw, IOT_PH_VALID_MIN, IOT_PH_VALID_MAX, IOT_PH_DEFAULT);
+            *clamped = IOT_PH_DEFAULT;
+            valid = false;
+        } else {
+            *clamped = raw;
+        }
+    }
+    else if (strcmp(sensor, "tds") == 0) {
+        if (raw < IOT_TDS_VALID_MIN || raw > IOT_TDS_VALID_MAX) {
+            Debug_Printf("[Sensor] WARN: TDS=%.1f out of range [%.1f,%.1f], clamped to 0\r\n",
+                         raw, IOT_TDS_VALID_MIN, IOT_TDS_VALID_MAX);
+            *clamped = 0.0f;
+            valid = false;
+        } else {
+            *clamped = raw;
+        }
+    }
+    else if (strcmp(sensor, "temp") == 0) {
+        /* 检测 sentinel 值（传感器故障标记）或超出物理范围 */
+        if (raw <= IOT_TEMP_FAULT_OPEN || raw >= IOT_TEMP_FAULT_SENTINEL ||
+            raw < IOT_TEMP_VALID_MIN || raw > IOT_TEMP_VALID_MAX) {
+            Debug_Printf("[Sensor] WARN: Temp=%.1f out of range [%.1f,%.1f], clamped to %.1f\r\n",
+                         raw, IOT_TEMP_VALID_MIN, IOT_TEMP_VALID_MAX, IOT_TEMP_DEFAULT);
+            *clamped = IOT_TEMP_DEFAULT;
+            valid = false;
+        } else {
+            *clamped = raw;
+        }
+    }
+    else if (strcmp(sensor, "turbidity") == 0) {
+        if (raw < IOT_TURB_VALID_MIN || raw > IOT_TURB_VALID_MAX) {
+            Debug_Printf("[Sensor] WARN: Turb=%.1f out of range [%.1f,%.1f], clamped to 0\r\n",
+                         raw, IOT_TURB_VALID_MIN, IOT_TURB_VALID_MAX);
+            *clamped = 0.0f;
+            valid = false;
+        } else {
+            *clamped = raw;
+        }
+    }
+    else {
+        *clamped = raw;  /* 未知传感器，不做验证 */
+    }
+
+    return valid;
+}
+
+/* ================================================================
  * GPS NMEA → Decimal
  * ================================================================ */
 float IOT_GPS_NMEA2Decimal(const char *nmea, char hem)

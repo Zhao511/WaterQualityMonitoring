@@ -70,13 +70,6 @@ typedef struct {
 } RFIDData;
 
 /* ================================================================
- * 温度合法性 (保留用于 TDS 补偿)
- * ================================================================ */
-#define TEMP_MIN_VALID       0.0f
-#define TEMP_MAX_VALID       60.0f
-#define TEMP_DEFAULT         25.0f
-
-/* ================================================================
  * FreeRTOS 队列 & 互斥量
  * ================================================================ */
 static QueueHandle_t xSensorQueue  = NULL;
@@ -166,16 +159,24 @@ static void vSensorTask(void *pvParameters)
 
     for (;;)
     {
-        /* 读取所有传感器 + 校准 */
-        sensor_data.ph          = IOT_Apply_Calibration("ph", PH_Sensor_Read());
-        sensor_data.turbidity   = 0;  /* 无浊度传感器, 固定为 0 */
-        sensor_data.temperature = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
+        /* 读取所有传感器 + 校准 + 物理范围验证 */
+        float raw_ph, raw_temp, raw_tds;
 
-        /* 温度合理性检查 */
+        raw_ph = IOT_Apply_Calibration("ph", PH_Sensor_Read());
+        IOT_Validate_SensorData("ph", raw_ph, &sensor_data.ph);
+
+        sensor_data.turbidity   = 0;  /* 无浊度传感器, 固定为 0 */
+
+        raw_temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
+        IOT_Validate_SensorData("temp", raw_temp, &sensor_data.temperature);
+
+        /* 温度合理性检查 → TDS 补偿用 (使用物理范围常量) */
         float temp = sensor_data.temperature;
-        if (temp < TEMP_MIN_VALID || temp > TEMP_MAX_VALID)
-            temp = TEMP_DEFAULT;
-        sensor_data.tds = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp));
+        if (temp < IOT_TEMP_VALID_MIN || temp > IOT_TEMP_VALID_MAX)
+            temp = IOT_TEMP_DEFAULT;
+
+        raw_tds = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp));
+        IOT_Validate_SensorData("tds", raw_tds, &sensor_data.tds);
 
         /* 更新全局物模型 WaterStatus (加锁保护) */
         if (xSemaphoreTake(xWaterMutex, pdMS_TO_TICKS(50)) == pdPASS)
@@ -375,15 +376,20 @@ static void vIOTTask(void *pvParameters)
         {
             if (notify & IOT_IMMEDIATE_REPORT_BIT)
             {
-                /* request_immediate_report: 全量采集 + 立即上报所有服务 */
-                IOT_Collect_All_Sensors(&g_water_status);
-                IOT_Report_WaterStatus(&g_water_status);
-                IOT_DeviceStatus_Update(&g_device_status);
-                IOT_Report_DeviceStatus(&g_device_status);
-                if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                /* request_immediate_report: 全量采集 + 立即上报所有服务
+                 * 加锁保护: 防止 vSensorTask(Prio3) 抢占造成数据撕裂 */
+                if (xSemaphoreTake(xWaterMutex, pdMS_TO_TICKS(100)) == pdPASS)
                 {
-                    IOT_Report_GPS(&g_gps_data);
-                    xSemaphoreGive(xGPSMutex);
+                    IOT_Collect_All_Sensors(&g_water_status);
+                    IOT_Report_WaterStatus(&g_water_status);
+                    IOT_DeviceStatus_Update(&g_device_status);
+                    IOT_Report_DeviceStatus(&g_device_status);
+                    if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                    {
+                        IOT_Report_GPS(&g_gps_data);
+                        xSemaphoreGive(xGPSMutex);
+                    }
+                    xSemaphoreGive(xWaterMutex);
                 }
             }
         }
@@ -396,13 +402,21 @@ static void vIOTTask(void *pvParameters)
         /* --- 定时: Water_status 上报 (可调间隔, 默认 5s) --- */
         if ((tick_count % g_report_interval_sec) == 0)
         {
-            /* 更新 GPS 文本 (点位地理位置), 加锁保护 */
+            /* 更新 GPS 文本 (点位地理位置), 加锁保护
+             * 仅在有 GPS Fix 时更新坐标; 无定位时设为空字符串 */
             if (xSemaphoreTake(xWaterMutex, pdMS_TO_TICKS(50)) == pdPASS)
             {
                 if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
                 {
-                    snprintf(g_water_status.gps, IOT_GPS_STR_LEN,
-                             "%.6f,%.6f", g_gps_data.longitude, g_gps_data.latitude);
+                    if (g_gps_data.gps_status != GPS_NO_FIX)
+                    {
+                        snprintf(g_water_status.gps, IOT_GPS_STR_LEN,
+                                 "%.6f,%.6f", g_gps_data.longitude, g_gps_data.latitude);
+                    }
+                    else
+                    {
+                        g_water_status.gps[0] = '\0';  /* 未定位: 空字符串 */
+                    }
                     xSemaphoreGive(xGPSMutex);
                 }
                 IOT_Report_WaterStatus(&g_water_status);

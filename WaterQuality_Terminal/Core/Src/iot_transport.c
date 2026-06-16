@@ -124,12 +124,22 @@ void IOT_Collect_All_Sensors(WaterStatus *ws)
 {
     if (!ws) return;
 
-    ws->ph   = IOT_Apply_Calibration("ph", PH_Sensor_Read());
-    ws->temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
+    float raw_ph, raw_temp, raw_tds;
+
+    raw_ph   = IOT_Apply_Calibration("ph", PH_Sensor_Read());
+    IOT_Validate_SensorData("ph", raw_ph, &ws->ph);
+
+    raw_temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
+    IOT_Validate_SensorData("temp", raw_temp, &ws->temp);
+
+    /* 温度合理性检查 — 使用物理范围常量 (不受 set_threshold 影响) */
     float temp_for_tds = ws->temp;
-    if (temp_for_tds < ws->temp_min || temp_for_tds > ws->temp_max)
-        temp_for_tds = 25.0f;
-    ws->tds  = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp_for_tds));
+    if (temp_for_tds < IOT_TEMP_VALID_MIN || temp_for_tds > IOT_TEMP_VALID_MAX)
+        temp_for_tds = IOT_TEMP_DEFAULT;
+
+    raw_tds  = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp_for_tds));
+    IOT_Validate_SensorData("tds", raw_tds, &ws->tds);
 
     /* 注: 无浊度传感器, turbidity 固定为 0 */
+    ws->turbidity = 0;
 }

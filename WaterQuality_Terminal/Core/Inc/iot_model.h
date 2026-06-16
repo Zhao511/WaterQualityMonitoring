@@ -151,6 +151,22 @@ typedef struct {
 #define IOT_DEFAULT_TEMP_MAX         35.0f
 #define IOT_DEFAULT_TDS_MAX          1000.0f
 
+/* ================================================================
+ * 传感器物理范围常量 (用于异常值过滤，超过此范围视为传感器故障)
+ * ================================================================ */
+#define IOT_PH_VALID_MIN       0.0f
+#define IOT_PH_VALID_MAX      14.0f
+#define IOT_TDS_VALID_MIN      0.0f
+#define IOT_TDS_VALID_MAX   5000.0f
+#define IOT_TEMP_VALID_MIN     0.0f
+#define IOT_TEMP_VALID_MAX    60.0f
+#define IOT_TEMP_DEFAULT      25.0f       /* 传感器故障时的回退温度 (°C) */
+#define IOT_TEMP_FAULT_SENTINEL 99.0f     /* 传感器故障标记值 (短路) */
+#define IOT_TEMP_FAULT_OPEN   -99.0f      /* 传感器故障标记值 (开路) */
+#define IOT_TURB_VALID_MIN     0.0f
+#define IOT_TURB_VALID_MAX  4000.0f
+#define IOT_PH_DEFAULT         7.0f       /* pH 传感器故障回退值 (中性) */
+
 /* 告警触发额外阈值 */
 #define IOT_BATTERY_LOW_THRESHOLD    10.0f
 #define IOT_SIGNAL_WEAK_THRESHOLD    -100

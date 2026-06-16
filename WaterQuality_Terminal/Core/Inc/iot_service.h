@@ -65,6 +65,15 @@ void IOT_Calibration_Get(SensorCalibration *cal);
 float IOT_Apply_Calibration(const char *sensor, float raw_value);
 
 /* ================================================================
+ * 传感器数据验证 — 物理范围检查 + 异常时回退安全值
+ * @param  sensor  传感器名 ("ph"/"tds"/"temp"/"turbidity")
+ * @param  raw     传感器原始读数
+ * @param  clamped 输出: 钳位后的安全值 (raw 在范围内则不变)
+ * @return true=在物理范围内, false=异常已被钳位
+ * ================================================================ */
+bool  IOT_Validate_SensorData(const char *sensor, float raw, float *clamped);
+
+/* ================================================================
  * GPS NMEA → Decimal 转换
  * @brief  NMEA 格式 ddmm.mmmm → 十进制度数
  * @param  nmea   NMEA 经纬度字符串 (如 "4807.038,N")
