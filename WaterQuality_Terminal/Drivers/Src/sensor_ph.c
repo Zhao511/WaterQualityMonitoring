@@ -1,5 +1,6 @@
 #include "sensor_ph.h"
 #include "adc_common.h"
+#include "iot_model.h"
 
 /**
  * @brief  初始化 pH 传感器
@@ -21,7 +22,7 @@ float PH_Sensor_Read(void)
 
     if (ADC_ReadChannel(ADC_CH_PH, &adc_value) != ADC_READ_OK)
     {
-        return 7.0f; /* 超时返回中性值 */
+        return IOT_PH_DEFAULT; /* 超时返回中性值 */
     }
     return PH_Sensor_Calculate(adc_value);
 }

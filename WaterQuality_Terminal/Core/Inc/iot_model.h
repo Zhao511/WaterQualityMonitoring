@@ -159,13 +159,12 @@ typedef struct {
 #define IOT_TEMP_DEFAULT      25.0f       /* 传感器故障时的回退温度 (°C) */
 #define IOT_TEMP_FAULT_SENTINEL 99.0f     /* 传感器故障标记值 (短路) */
 #define IOT_TEMP_FAULT_OPEN   -99.0f      /* 传感器故障标记值 (开路) */
-#define IOT_TURB_VALID_MIN     0.0f
-#define IOT_TURB_VALID_MAX  4000.0f
 #define IOT_PH_DEFAULT         7.0f       /* pH 传感器故障回退值 (中性) */
 
 /* 告警触发额外阈值 */
 #define IOT_BATTERY_LOW_THRESHOLD    10.0f
 #define IOT_SIGNAL_WEAK_THRESHOLD    -100
+#define IOT_RSSI_QUERY_FAILED         -120  /* AT+RSSI? 查询失败时返回 */
 #define IOT_GPS_STALE_SECONDS        600     /* 10 分钟无 GPS 定位触发告警 */
 
 /* ================================================================

@@ -99,31 +99,39 @@ void IOT_DeviceStatus_Update(DeviceStatus *s)
     make_timestamp(s->last_report, IOT_TIME_STR_LEN);
 }
 
+/**
+ * @brief  获取 LoRa 模块真实 RSSI 信号强度
+ * @return RSSI 值 (dBm)，查询失败返回 IOT_RSSI_QUERY_FAILED (-120)
+ * @note   每 30s 查询一次 (AT+RSSI?)，避免频繁切配置模式影响透传数据
+ *         V3.0 固件响应格式: "RSSI:-85\r\n"
+ */
 int8_t IOT_Get_LoRa_RSSI(void)
 {
-    /* 静态缓存: 启动时查询一次, 之后直接返回缓存值
-     * 避免频繁切换配置模式导致 RF 数据丢失 (ping 被 AT 响应缓冲区吞掉) */
-    static int8_t  s_rssi_cached = -55;
-    static bool    s_rssi_queried = false;
+    static int8_t   s_rssi_cached = IOT_RSSI_QUERY_FAILED;
+    static uint32_t s_last_query_tick = 0;
+    uint32_t now = xTaskGetTickCount();
 
-    if (!s_rssi_queried) {
-        char resp[32];
-        int rssi = -55;
-
-        if (LoRa_SendATCmd("AT+RSSI?", resp, sizeof(resp)) == 0) {
-            char *p = strstr(resp, "RSSI");
-            if (p) {
-                p = strchr(p, ':');
-                if (p) rssi = (int)strtol(p + 1, NULL, 10);
-            } else {
-                rssi = (int)strtol(resp, NULL, 10);
-            }
-            if (rssi > 0) rssi = -rssi;
-        }
-        s_rssi_cached = (int8_t)rssi;
-        s_rssi_queried = true;
+    /* 每 30s 查询一次 */
+    if ((now - s_last_query_tick) < pdMS_TO_TICKS(30000)) {
+        return s_rssi_cached;
     }
+    s_last_query_tick = now;
 
+    char resp[32];
+    int rssi = IOT_RSSI_QUERY_FAILED;
+
+    if (LoRa_SendATCmd("AT+RSSI?", resp, sizeof(resp)) == 0) {
+        /* V3.0 响应: "RSSI:-85" 或直接数字，取冒号后数值 */
+        char *p = strstr(resp, "RSSI");
+        if (p) {
+            p = strchr(p, ':');
+            if (p) rssi = (int)strtol(p + 1, NULL, 10);
+        } else {
+            rssi = (int)strtol(resp, NULL, 10);
+        }
+        if (rssi > 0) rssi = -rssi;  /* 正值转负 (dBm 为负) */
+    }
+    s_rssi_cached = (int8_t)rssi;
     return s_rssi_cached;
 }
 
