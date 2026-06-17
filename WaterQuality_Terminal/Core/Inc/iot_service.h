@@ -46,7 +46,7 @@ void IOT_Threshold_Init(WaterStatus *ws);
 /**
  * @brief  设置阈值
  * @param  ws    目标 WaterStatus
- * @param  param 参数名: "ph_min","ph_max","tds_max","turbidity_max","temp_min","temp_max"
+ * @param  param 参数名: "ph_min","ph_max","tds_max","temp_min","temp_max"
  * @param  value 新阈值
  * @return true=成功, false=未知参数名
  */
@@ -66,7 +66,7 @@ float IOT_Apply_Calibration(const char *sensor, float raw_value);
 
 /* ================================================================
  * 传感器数据验证 — 物理范围检查 + 异常时回退安全值
- * @param  sensor  传感器名 ("ph"/"tds"/"temp"/"turbidity")
+ * @param  sensor  传感器名 ("ph"/"tds"/"temp")
  * @param  raw     传感器原始读数
  * @param  clamped 输出: 钳位后的安全值 (raw 在范围内则不变)
  * @return true=在物理范围内, false=异常已被钳位

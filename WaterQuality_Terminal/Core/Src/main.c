@@ -28,7 +28,6 @@
 /* 驱动层 */
 #include "led_rgb.h"
 #include "sensor_ph.h"
-#include "sensor_turbidity.h"
 #include "sensor_temp.h"
 #include "sensor_tds.h"
 #include "adc_common.h"
@@ -66,7 +65,6 @@ uint32_t     g_report_interval_sec = IOT_DEFAULT_REPORT_INTERVAL;
  * ================================================================ */
 typedef struct {
     float ph;
-    float turbidity;
     float temperature;
     float tds;
 } SensorData;
@@ -178,15 +176,6 @@ static void vSensorTask(void *pvParameters)
         raw_ph = IOT_Apply_Calibration("ph", PH_Sensor_Read());
         IOT_Validate_SensorData("ph", raw_ph, &sensor_data.ph);
 
-#if TURBIDITY_SENSOR_ENABLED
-        {
-            float raw_turb = IOT_Apply_Calibration("turbidity", Turbidity_Sensor_Read());
-            IOT_Validate_SensorData("turbidity", raw_turb, &sensor_data.turbidity);
-        }
-#else
-        sensor_data.turbidity   = 0;  /* 无浊度传感器, 固定为 0 */
-#endif
-
         raw_temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
         IOT_Validate_SensorData("temp", raw_temp, &sensor_data.temperature);
 
@@ -204,7 +193,6 @@ static void vSensorTask(void *pvParameters)
             g_water_status.ph        = sensor_data.ph;
             g_water_status.tds       = sensor_data.tds;
             g_water_status.temp      = sensor_data.temperature;
-            g_water_status.turbidity = sensor_data.turbidity;
             xSemaphoreGive(xWaterMutex);
         }
 
@@ -225,9 +213,9 @@ static void vSensorTask(void *pvParameters)
         /* 调试输出 */
         if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
         {
-            Debug_Printf("PH:%.2f TDS:%.1f Temp:%.1f Turb:%.1f\r\n",
+            Debug_Printf("PH:%.2f TDS:%.1f Temp:%.1f\r\n",
                          sensor_data.ph, sensor_data.tds,
-                         sensor_data.temperature, sensor_data.turbidity);
+                         sensor_data.temperature);
             xSemaphoreGive(xDebugMutex);
         }
 
@@ -237,9 +225,9 @@ static void vSensorTask(void *pvParameters)
 
         if ((g_sensor_cycle % 10) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[Sensor] cycle=%lu | PH=%.2f TDS=%.1f Temp=%.1f Turb=%.1f\r\n",
+                Debug_Printf("[Sensor] cycle=%lu | PH=%.2f TDS=%.1f Temp=%.1f\r\n",
                              g_sensor_cycle, sensor_data.ph, sensor_data.tds,
-                             sensor_data.temperature, sensor_data.turbidity);
+                             sensor_data.temperature);
                 xSemaphoreGive(xDebugMutex);
             }
         }
@@ -249,18 +237,16 @@ static void vSensorTask(void *pvParameters)
          *   - 放在 WDG_Heartbeat 之后: 故障前心跳已上报
          *   - 使用 xDebugMutex 保护 Debug_Printf */
         if ((g_sensor_cycle % 10) == 0) {
-            uint16_t r_ph, r_tds, r_turb, r_temp;
-            uint8_t  ok_ph, ok_tds, ok_turb, ok_temp;
+            uint16_t r_ph, r_tds, r_temp;
+            uint8_t  ok_ph, ok_tds, ok_temp;
             ok_ph   = ADC_ReadChannel(ADC_CH_PH,        &r_ph);
             ok_tds  = ADC_ReadChannel(ADC_CH_TDS,       &r_tds);
-            ok_turb = ADC_ReadChannel(ADC_CH_TURBIDITY, &r_turb);
             ok_temp = ADC_ReadChannel(ADC_CH_TEMP,      &r_temp);
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[RAW ADC] cycle=%lu | pH=%s%u TDS=%s%u Turb=%s%u Temp=%s%u\r\n",
+                Debug_Printf("[RAW ADC] cycle=%lu | pH=%s%u TDS=%s%u Temp=%s%u\r\n",
                              g_sensor_cycle,
                              (ok_ph   == ADC_READ_OK) ? "" : "TMO:", r_ph,
                              (ok_tds  == ADC_READ_OK) ? "" : "TMO:", r_tds,
-                             (ok_turb == ADC_READ_OK) ? "" : "TMO:", r_turb,
                              (ok_temp == ADC_READ_OK) ? "" : "TMO:", r_temp);
                 xSemaphoreGive(xDebugMutex);
             }
@@ -656,10 +642,6 @@ int main(void)
     Debug_Printf("[INIT] PH_Sensor...\r\n");
     PH_Sensor_Init();
     Debug_Printf("[INIT] PH_Sensor OK\r\n");
-
-    Debug_Printf("[INIT] Turbidity_Sensor...\r\n");
-    Turbidity_Sensor_Init();
-    Debug_Printf("[INIT] Turbidity_Sensor OK\r\n");
 
     Debug_Printf("[INIT] Temp_Sensor...\r\n");
     Temp_Sensor_Init();

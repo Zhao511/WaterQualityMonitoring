@@ -96,7 +96,6 @@ typedef struct {
     float  tds;                /* TDS 电导率数值 (mg/L)              */
     float  ph;                 /* pH 酸碱度                          */
     float  temp;               /* 水体温度 (Celsius)                 */
-    float  turbidity;          /* 浊度 (NTU)                         */
     char   rfid[IOT_RFID_LEN]; /* 监测点位编号                       */
     char   gps[IOT_GPS_STR_LEN]; /* 点位地理位置文本 "lon,lat"      */
 
@@ -104,7 +103,6 @@ typedef struct {
     float  ph_min;
     float  ph_max;
     float  tds_max;
-    float  turbidity_max;
     float  temp_min;
     float  temp_max;
 } WaterStatus;
@@ -137,7 +135,6 @@ typedef struct {
 typedef struct {
     float ph_offset;
     float tds_offset;
-    float turbidity_offset;
     float temp_offset;
 } SensorCalibration;
 
@@ -146,7 +143,6 @@ typedef struct {
  * ================================================================ */
 #define IOT_DEFAULT_PH_MIN           6.5f
 #define IOT_DEFAULT_PH_MAX           8.5f
-#define IOT_DEFAULT_TURBIDITY_MAX    50.0f
 #define IOT_DEFAULT_TEMP_MIN         15.0f
 #define IOT_DEFAULT_TEMP_MAX         35.0f
 #define IOT_DEFAULT_TDS_MAX          1000.0f

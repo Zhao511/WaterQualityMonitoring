@@ -1208,12 +1208,10 @@ function initPage() {
                     device.data.temperature += (Math.random() - 0.5) * 0.5;
                     device.data.ph += (Math.random() - 0.5) * 0.1;
                     device.data.ec += (Math.random() - 0.5) * 10;
-                    device.data.turbidity += (Math.random() - 0.5) * 5;
 
                     device.data.temperature = Math.max(-20, Math.min(100, device.data.temperature));
                     device.data.ph = Math.max(0, Math.min(14, device.data.ph));
                     device.data.ec = Math.max(0, Math.min(2000, device.data.ec));
-                    device.data.turbidity = Math.max(0, Math.min(1000, device.data.turbidity));
 
                     device.lastUpdate = Date.now();
                     hasOnlineDevice = true;
@@ -1243,7 +1241,6 @@ function generateMockHistoryData(hours, intervalMinutes) {
     var baseTemp = device.data.temperature || 25;
     var basePh = device.data.ph || 7;
     var baseEc = device.data.ec || 500;
-    var baseTurb = device.data.turbidity || 100;
     
     for (var i = totalPoints; i >= 0; i--) {
         var timestamp = now - (i * intervalMs);
@@ -1257,7 +1254,6 @@ function generateMockHistoryData(hours, intervalMinutes) {
             temperature: baseTemp + tempVariation + (Math.random() - 0.5) * 3,
             ph: basePh + (Math.random() - 0.5) * 0.5,
             ec: baseEc + (Math.random() - 0.5) * 50,
-            turbidity: baseTurb + (Math.random() - 0.5) * 30
         });
     }
     
@@ -1293,7 +1289,6 @@ function getParamUnit(param) {
         'temperature': '℃',
         'ph': '',
         'ec': 'μS/cm',
-        'turbidity': 'NTU'
     };
     return map[param] || '';
 }
@@ -1304,7 +1299,6 @@ function getParamName(param) {
         'temperature': '水温',
         'ph': 'pH值',
         'ec': '电导率',
-        'turbidity': '浊度'
     };
     return map[param] || param;
 }
@@ -1383,7 +1377,6 @@ function loadHistoryChart() {
             if (param === 'temperature') thresholdValue = thresholds.Tem_threshold;
             else if (param === 'ph') thresholdValue = thresholds.Ph_max;
             else if (param === 'ec') thresholdValue = thresholds.Ec_threshold;
-            else if (param === 'turbidity') thresholdValue = thresholds.Turb_threshold;
         }
 
         // 创建图表
@@ -1461,7 +1454,6 @@ function exportHistoryData() {
             d.temperature.toFixed(2),
             d.ph.toFixed(2),
             d.ec.toFixed(2),
-            d.turbidity.toFixed(2)
         ];
     });
     

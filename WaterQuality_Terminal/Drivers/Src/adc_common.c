@@ -15,7 +15,7 @@ extern SemaphoreHandle_t xADCMutex;
   * 参    数：无
   * 返 回 值：无
   * 说    明：统一初始化ADC1及传感器GPIO（PA0~PA3）
-  *          pH=PA0, TDS=PA1, Turbidity=PA2, Temp=PA3
+  *          pH=PA0, TDS=PA1, Temp=PA3
   */
 void ADC_Common_Init(void)
 {
@@ -45,8 +45,7 @@ void ADC_Common_Init(void)
 	/*规则组通道配置（放在Init之前，对齐江科大教程顺序）*/
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_0, 1, ADC_SampleTime_55Cycles5);	//PA0, 序列1
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_1, 2, ADC_SampleTime_55Cycles5);	//PA1, 序列2
-	ADC_RegularChannelConfig(ADC1, ADC_Channel_2, 3, ADC_SampleTime_55Cycles5);	//PA2, 序列3
-	ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 4, ADC_SampleTime_55Cycles5);	//PA3, 序列4
+	ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 3, ADC_SampleTime_55Cycles5);	//PA3, 序列3
 
 	/*ADC初始化*/
 	{
@@ -56,7 +55,7 @@ void ADC_Common_Init(void)
 		ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_None;	//外部触发，使用软件触发，不需要外部触发
 		ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;	//连续转换，失能，每转换一次规则组序列后停止
 		ADC_InitStructure.ADC_ScanConvMode = DISABLE;		//扫描模式，失能，只转换规则组的序列1这一个位置
-		ADC_InitStructure.ADC_NbrOfChannel = 4;				//通道数，为4
+		ADC_InitStructure.ADC_NbrOfChannel = 3;				//通道数，为3
 		ADC_Init(ADC1, &ADC_InitStructure);					//将结构体变量交给ADC_Init，配置ADC1
 	}
 

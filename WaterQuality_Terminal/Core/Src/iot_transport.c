@@ -9,7 +9,7 @@
 #include "iot_service.h"
 #include "lora.h"
 #include "usart_debug.h"
-#include "adc_common.h"     /* TURBIDITY_SENSOR_ENABLED */
+#include "adc_common.h"     /* ADC_CH_xxx 通道定义 */
 #include <string.h>
 
 /* ================================================================
@@ -117,7 +117,6 @@ void IOT_Report_GPS(const GPS *g)
  * ================================================================ */
 #include "sensor_ph.h"
 #include "sensor_tds.h"
-#include "sensor_turbidity.h"
 #include "sensor_temp.h"
 
 void IOT_Collect_All_Sensors(WaterStatus *ws)
@@ -139,14 +138,4 @@ void IOT_Collect_All_Sensors(WaterStatus *ws)
 
     raw_tds  = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp_for_tds));
     IOT_Validate_SensorData("tds", raw_tds, &ws->tds);
-
-#if TURBIDITY_SENSOR_ENABLED
-    {
-        float raw_turb = IOT_Apply_Calibration("turbidity", Turbidity_Sensor_Read());
-        IOT_Validate_SensorData("turbidity", raw_turb, &ws->turbidity);
-    }
-#else
-    /* 注: 无浊度传感器, turbidity 固定为 0 */
-    ws->turbidity = 0;
-#endif
 }

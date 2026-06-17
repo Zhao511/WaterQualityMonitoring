@@ -10,7 +10,6 @@
 #include "iot_service.h"
 #include "sensor_ph.h"
 #include "sensor_tds.h"
-#include "sensor_turbidity.h"
 #include "sensor_temp.h"
 #include "gps.h"
 #include "lora.h"
@@ -251,7 +250,6 @@ void IOT_Threshold_Init(WaterStatus *ws)
     ws->ph_min        = IOT_DEFAULT_PH_MIN;
     ws->ph_max        = IOT_DEFAULT_PH_MAX;
     ws->tds_max       = IOT_DEFAULT_TDS_MAX;
-    ws->turbidity_max = IOT_DEFAULT_TURBIDITY_MAX;
     ws->temp_min      = IOT_DEFAULT_TEMP_MIN;
     ws->temp_max      = IOT_DEFAULT_TEMP_MAX;
 }
@@ -263,7 +261,6 @@ bool IOT_Threshold_Set(WaterStatus *ws, const char *param, float value)
     if      (strcmp(param, "ph_min") == 0)        ws->ph_min        = value;
     else if (strcmp(param, "ph_max") == 0)        ws->ph_max        = value;
     else if (strcmp(param, "tds_max") == 0)       ws->tds_max       = value;
-    else if (strcmp(param, "turbidity_max") == 0) ws->turbidity_max = value;
     else if (strcmp(param, "temp_min") == 0)      ws->temp_min      = value;
     else if (strcmp(param, "temp_max") == 0)      ws->temp_max      = value;
     else return false;
@@ -283,7 +280,6 @@ void IOT_Calibration_Set(const char *sensor, const char *mode, float value)
     if (strcmp(mode, "offset") == 0) {
         if      (strcmp(sensor, "ph")        == 0) g_cal.ph_offset        = value;
         else if (strcmp(sensor, "tds")       == 0) g_cal.tds_offset       = value;
-        else if (strcmp(sensor, "turbidity") == 0) g_cal.turbidity_offset = value;
         else if (strcmp(sensor, "temp")      == 0) g_cal.temp_offset      = value;
     }
     Debug_Printf("IOT: Calibrate %s %s = %.3f\r\n", sensor, mode, value);
@@ -296,7 +292,6 @@ float IOT_Apply_Calibration(const char *sensor, float raw)
     if (!sensor) return raw;
     if      (strcmp(sensor, "ph")        == 0) return raw + g_cal.ph_offset;
     else if (strcmp(sensor, "tds")       == 0) return raw + g_cal.tds_offset;
-    else if (strcmp(sensor, "turbidity") == 0) return raw + g_cal.turbidity_offset;
     else if (strcmp(sensor, "temp")      == 0) return raw + g_cal.temp_offset;
     return raw;
 }
@@ -342,20 +337,7 @@ bool IOT_Validate_SensorData(const char *sensor, float raw, float *clamped)
             *clamped = raw;
         }
     }
-    else if (strcmp(sensor, "turbidity") == 0) {
-        if (raw < IOT_TURB_VALID_MIN || raw > IOT_TURB_VALID_MAX) {
             Debug_Printf("[Sensor] WARN: Turb=%.1f out of range [%.1f,%.1f], clamped to 0\r\n",
-                         raw, IOT_TURB_VALID_MIN, IOT_TURB_VALID_MAX);
-            *clamped = 0.0f;
-            valid = false;
-        } else {
-            *clamped = raw;
-        }
-    }
-    else {
-        *clamped = raw;  /* 未知传感器，不做验证 */
-    }
-
     return valid;
 }
 
@@ -572,12 +554,8 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
                 g_water_status.ph_min = min; g_water_status.ph_max = max;
             } else if (strcmp(param, "tds") == 0) {
                 g_water_status.tds_max = max;
-            } else if (strcmp(param, "turbidity") == 0) {
-                g_water_status.turbidity_max = max;
             } else if (strcmp(param, "temp") == 0) {
                 g_water_status.temp_min = min; g_water_status.temp_max = max;
-            } else {
-                iot_json_serialize_response(cmd, false, "unknown param", rsp_buf, max_len);
                 return true;
             }
             Debug_Printf("IOT: Threshold %s [%.2f, %.2f]\r\n", param, min, max);
