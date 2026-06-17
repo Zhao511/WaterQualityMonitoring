@@ -7,6 +7,8 @@ var CONFIG = {
     ak: '',
     sk: '',
     projectId: '',
+    productId: '',
+    endpoint: '',
     region: 'cn-south-1',
 
     // 当前选中的设备ID

@@ -834,6 +834,8 @@ function connectCloud() {
     var ak = document.getElementById('cloud-ak').value.trim();
     var sk = document.getElementById('cloud-sk').value.trim();
     var projectId = document.getElementById('cloud-projectid').value.trim();
+    var productId = document.getElementById('cloud-productid').value.trim();
+    var endpoint = document.getElementById('cloud-endpoint').value.trim();
 
     if (!ak || !sk || !projectId) {
         showToast('请填写 AK、SK 和项目ID', 'error');
@@ -843,6 +845,8 @@ function connectCloud() {
     CONFIG.ak = ak;
     CONFIG.sk = sk;
     CONFIG.projectId = projectId;
+    CONFIG.productId = productId;
+    CONFIG.endpoint = endpoint;
     saveConfig();
 
     document.getElementById('cloud-status').innerHTML =
@@ -851,7 +855,7 @@ function connectCloud() {
     // 发送到后端
     api('/api/config', {
         method: 'POST',
-        body: { ak: ak, sk: sk, projectId: projectId, clientId: CLIENT_ID }
+        body: { ak: ak, sk: sk, projectId: projectId, productId: productId, endpoint: endpoint, clientId: CLIENT_ID }
     }).then(function(res) {
         if (res.code === 200) {
             CONFIG.cloudConnected = true;
@@ -1187,6 +1191,8 @@ function initPage() {
     document.getElementById('cloud-ak').value = CONFIG.ak || '';
     document.getElementById('cloud-sk').value = CONFIG.sk || '';
     document.getElementById('cloud-projectid').value = CONFIG.projectId || '';
+    document.getElementById('cloud-productid').value = CONFIG.productId || '';
+    document.getElementById('cloud-endpoint').value = CONFIG.endpoint || '';
     document.getElementById('cloud-status').innerHTML =
         CONFIG.cloudConnected ? '<span class="label label-success">已连接</span>' : '<span class="label label-default">未配置</span>';
 

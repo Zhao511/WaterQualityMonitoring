@@ -33,6 +33,9 @@ void SystemInit(void)
 
     /* 复位 CFGR: SW, HPRE, PPRE1, PPRE2, ADCPRE, MCO */
     RCC->CFGR &= (uint32_t)0xF8FF0000;
+    /* 先清除 ADCPRE 位，再设置为 PCLK2/6 (12MHz) */
+    RCC->CFGR &= ~((uint32_t)(3UL << 14));       /* 清 ADCPRE[1:0] */
+    RCC->CFGR |=  (uint32_t)(2UL << 14);         /* ADCPRE = PCLK2/6 (12MHz), ADC 最大 14MHz */
 
     /* 关 HSE, CSS, PLL */
     RCC->CR &= (uint32_t)0xFEF6FFFF;
@@ -66,6 +69,9 @@ void SystemInit(void)
 
     /* ---- HSE OK → PLL ×9 = 72MHz ---- */
     RCC->CFGR |= (uint32_t)0x001D0000;        /* PLLSRC=HSE, PLLMUL=9 */
+    /* 设置 ADCPRE = PCLK2/6 (12MHz) */
+    RCC->CFGR &= ~((uint32_t)(3UL << 14));    /* 清 ADCPRE[1:0] */
+    RCC->CFGR |=  (uint32_t)(2UL << 14);      /* ADCPRE = PCLK2/6 */
     RCC->CR |= (uint32_t)0x01000000;          /* PLLON */
     timeout = 0;
     while ((RCC->CR & RCC_CR_PLLRDY) == 0) {
@@ -83,10 +89,41 @@ void SystemInit(void)
     return;
 
 use_hsi:
-    /* 回退到 HSI 8MHz */
+    /* 回退到 HSI + PLL → 72MHz (适配无外部晶振的开发板) */
     RCC->CR &= ~((uint32_t)0x01010000);       /* 关 PLL + HSE */
-    RCC->CFGR &= ~((uint32_t)0x00000003);     /* SW = HSI */
-    SystemCoreClock = 8000000;
+    
+    /* HSI/2 = 4MHz, PLL ×18 = 72MHz */
+    RCC->CFGR &= ~((uint32_t)0xFF80FFFF);     /* 清 PLLSRC, PLLMUL */
+    RCC->CFGR |= (uint32_t)0x00C00000;        /* PLLSRC=HSI/2, PLLMUL=18 */
+    
+    /* 确保 ADCPRE = PCLK2/6 (12MHz) */
+    RCC->CFGR &= ~((uint32_t)(3UL << 14));    /* 清 ADCPRE[1:0] */
+    RCC->CFGR |=  (uint32_t)(2UL << 14);      /* ADCPRE = PCLK2/6 */
+    
+    RCC->CR |= (uint32_t)0x01000000;          /* PLLON */
+    timeout = 0;
+    while ((RCC->CR & RCC_CR_PLLRDY) == 0) {
+        if (++timeout >= 0x10000) {
+            /* PLL启动失败，回退到HSI 8MHz */
+            RCC->CR &= ~((uint32_t)0x01000000);
+            RCC->CFGR &= ~((uint32_t)0x00000003);
+            SystemCoreClock = 8000000;
+            return;
+        }
+    }
+    
+    /* 切换到 PLL */
+    RCC->CFGR &= ~((uint32_t)0x00000003);
+    RCC->CFGR |= (uint32_t)0x00000002;        /* SW = PLL */
+    timeout = 0;
+    while ((RCC->CFGR & RCC_CFGR_SWS) != 0x00000008) {
+        if (++timeout >= 0x10000) {
+            RCC->CFGR &= ~((uint32_t)0x00000003);
+            SystemCoreClock = 8000000;
+            return;
+        }
+    }
+    SystemCoreClock = 72000000;
 }
 
 /**

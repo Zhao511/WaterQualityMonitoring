@@ -17,15 +17,7 @@
 #include "led_rgb.h"
 #include "usart_debug.h"
 
-/* NVIC_SystemReset (CMSIS 精简版未提供此函数, 用内联汇编实现) */
-__asm void NVIC_SystemReset(void)
-{
-    LDR    R0, =0xE000ED0C   /* SCB->AIRCR 地址 */
-    LDR    R1, =0x05FA0004   /* VECTKEY (0x5FA<<16) | SYSRESETREQ (1<<2) */
-    STR    R1, [R0]
-    DSB
-    B      .
-}
+/* NVIC_SystemReset 由 V3.5.0 CMSIS core_cm3.h 提供, 无需自定义 */
 
 #include "FreeRTOS.h"
 #include "task.h"

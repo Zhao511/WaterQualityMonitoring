@@ -9,6 +9,7 @@
 #include "iot_service.h"
 #include "lora.h"
 #include "usart_debug.h"
+#include "adc_common.h"     /* TURBIDITY_SENSOR_ENABLED */
 #include <string.h>
 
 /* ================================================================
@@ -38,8 +39,7 @@ void IOT_Process_Incoming(void)
     uint16_t len;
 
     len = LoRa_ReceiveData(rx_buf, sizeof(rx_buf) - 1);
-    Debug_Printf("[IoT] RX check len=%u\r\n", len);
-    if (len == 0) return;
+    if (len == 0) return;   /* 无数据时静默, 不刷串口 */
 
     rx_buf[len] = '\0';
     Debug_Printf("IOT RX: %s\r\n", (char *)rx_buf);
@@ -140,6 +140,13 @@ void IOT_Collect_All_Sensors(WaterStatus *ws)
     raw_tds  = IOT_Apply_Calibration("tds", TDS_Sensor_Read(temp_for_tds));
     IOT_Validate_SensorData("tds", raw_tds, &ws->tds);
 
+#if TURBIDITY_SENSOR_ENABLED
+    {
+        float raw_turb = IOT_Apply_Calibration("turbidity", Turbidity_Sensor_Read());
+        IOT_Validate_SensorData("turbidity", raw_turb, &ws->turbidity);
+    }
+#else
     /* 注: 无浊度传感器, turbidity 固定为 0 */
     ws->turbidity = 0;
+#endif
 }

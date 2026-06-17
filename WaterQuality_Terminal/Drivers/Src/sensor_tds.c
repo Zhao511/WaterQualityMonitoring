@@ -33,9 +33,9 @@ uint16_t TDS_Sensor_ReadRaw(void)
  */
 float TDS_Sensor_Read(float temperature)
 {
-    uint16_t adc_value = TDS_Sensor_ReadRaw();
+    uint16_t adc_value;
 
-    if (adc_value == 0)
+    if (ADC_ReadChannel(ADC_CH_TDS, &adc_value) != ADC_READ_OK)
     {
         return 0.0f; /* ADC 读取超时 */
     }

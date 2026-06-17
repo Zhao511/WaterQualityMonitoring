@@ -170,6 +170,37 @@ hf_save_scb
     MOVS    R1, #0
     STR     R1, [R2, #56]           ;; fault_type = 0
 
+    ;; Step 4: Signal fault type via USART1 (0x48='H' if TXE ready)
+    LDR     R3, =0x40013800         ;; USART1_SR
+    LDR     R1, [R3, #0]
+    LSLS    R1, R1, #25             ;; TXE(bit7)->N flag
+    BPL     hf_uart_skip            ;; TXE not ready, skip
+    LDR     R3, =0x40013804         ;; USART1_DR
+    MOVS    R1, #0x48               ;; 'H'
+    STRH    R1, [R3, #0]
+hf_uart_skip
+
+    ;; Step 5: Configure PB6 push-pull + LED blink 3 times
+    LDR     R3, =0x40010C00         ;; GPIOB_CRL
+    LDR     R1, [R3, #0]
+    LDR     R2, =0xF0FFFFFF         ;; Clear bits[27:24] for PB6
+    ANDS    R1, R1, R2
+    ORR     R1, R1, #0x03000000     ;; MODE6=11, CNF6=00 (GPIO PP 50MHz)
+    STR     R1, [R3, #0]
+    MOVS    R1, #0x0040             ;; PB6 mask
+    MOVS    R4, #3                  ;; 3 blinks
+hf_blink
+    STR     R1, [R3, #0x14]         ;; BRR: PB6=LOW, LED ON (common-anode)
+    LDR     R2, =0xFFFFF
+hf_dly1 SUBS    R2, R2, #1
+    BNE     hf_dly1
+    STR     R1, [R3, #0x10]         ;; BSRR: PB6=HIGH, LED OFF
+    LDR     R2, =0xFFFFF
+hf_dly2 SUBS    R2, R2, #1
+    BNE     hf_dly2
+    SUBS    R4, R4, #1
+    BNE     hf_blink
+
     ;; [SET BREAKPOINT HERE] -> Watch fault_snapshot
     B        .
     ALIGN
@@ -211,6 +242,37 @@ mm_save_scb
     STR     R1, [R2, #40]           ;; MMFAR
     MOVS    R1, #1
     STR     R1, [R2, #56]
+
+    ;; Signal fault via USART1 (0x4D='M')
+    LDR     R3, =0x40013800
+    LDR     R1, [R3, #0]
+    LSLS    R1, R1, #25
+    BPL     mm_uart_skip
+    LDR     R3, =0x40013804
+    MOVS    R1, #0x4D               ;; 'M'
+    STRH    R1, [R3, #0]
+mm_uart_skip
+
+    ;; Configure PB6 + blink 3 times
+    LDR     R3, =0x40010C00
+    LDR     R1, [R3, #0]
+    LDR     R2, =0xF0FFFFFF
+    ANDS    R1, R1, R2
+    ORR     R1, R1, #0x03000000
+    STR     R1, [R3, #0]
+    MOVS    R1, #0x0040
+    MOVS    R4, #3
+mm_blink
+    STR     R1, [R3, #0x14]
+    LDR     R2, =0xFFFFF
+mm_dly1 SUBS    R2, R2, #1
+    BNE     mm_dly1
+    STR     R1, [R3, #0x10]
+    LDR     R2, =0xFFFFF
+mm_dly2 SUBS    R2, R2, #1
+    BNE     mm_dly2
+    SUBS    R4, R4, #1
+    BNE     mm_blink
     B        .
     ALIGN
 }
@@ -251,6 +313,37 @@ bf_save_scb
     STR     R1, [R2, #44]           ;; BFAR
     MOVS    R1, #2
     STR     R1, [R2, #56]
+
+    ;; Signal fault via USART1 (0x42='B')
+    LDR     R3, =0x40013800
+    LDR     R1, [R3, #0]
+    LSLS    R1, R1, #25
+    BPL     bf_uart_skip
+    LDR     R3, =0x40013804
+    MOVS    R1, #0x42               ;; 'B'
+    STRH    R1, [R3, #0]
+bf_uart_skip
+
+    ;; Configure PB6 + blink 3 times
+    LDR     R3, =0x40010C00
+    LDR     R1, [R3, #0]
+    LDR     R2, =0xF0FFFFFF
+    ANDS    R1, R1, R2
+    ORR     R1, R1, #0x03000000
+    STR     R1, [R3, #0]
+    MOVS    R1, #0x0040
+    MOVS    R4, #3
+bf_blink
+    STR     R1, [R3, #0x14]
+    LDR     R2, =0xFFFFF
+bf_dly1 SUBS    R2, R2, #1
+    BNE     bf_dly1
+    STR     R1, [R3, #0x10]
+    LDR     R2, =0xFFFFF
+bf_dly2 SUBS    R2, R2, #1
+    BNE     bf_dly2
+    SUBS    R4, R4, #1
+    BNE     bf_blink
     B        .
     ALIGN
 }
@@ -326,6 +419,35 @@ __attribute__((naked)) void HardFault_Handler(void)
 
         "MOVS   R1, #0                          \n"
         "STR    R1, [R2, #56]                   \n"  /* type=0 */
+
+        /* Signal fault via USART1 + LED blink 3x */
+        "LDR    R3, =0x40013800                 \n"  /* USART1_SR */
+        "LDR    R1, [R3, #0]                    \n"
+        "LSLS   R1, R1, #25                     \n"
+        "BPL    2f                              \n"
+        "LDR    R3, =0x40013804                 \n"  /* USART1_DR */
+        "MOVS   R1, #'H'                        \n"
+        "STRH   R1, [R3, #0]                    \n"
+        "2:                                     \n"
+        "LDR    R3, =0x40010C00                 \n"  /* GPIOB_CRL */
+        "LDR    R1, [R3, #0]                    \n"
+        "LDR    R2, =0xF0FFFFFF                 \n"
+        "ANDS   R1, R1, R2                      \n"
+        "ORR    R1, R1, #0x03000000             \n"
+        "STR    R1, [R3, #0]                    \n"
+        "MOVS   R1, #0x0040                     \n"
+        "MOVS   R4, #3                          \n"
+        "3:                                     \n"
+        "STR    R1, [R3, #0x14]                 \n"  /* BRR: ON */
+        "LDR    R2, =0xFFFFF                    \n"
+        "4:    SUBS    R2, R2, #1               \n"
+        "BNE    4b                              \n"
+        "STR    R1, [R3, #0x10]                 \n"  /* BSRR: OFF */
+        "LDR    R2, =0xFFFFF                    \n"
+        "5:    SUBS    R2, R2, #1               \n"
+        "BNE    5b                              \n"
+        "SUBS   R4, R4, #1                      \n"
+        "BNE    3b                              \n"
         "B      .                               \n"
     );
 }
@@ -364,6 +486,35 @@ __attribute__((naked)) void MemManage_Handler(void)
         "STR    R1, [R2, #40]                   \n"  /* MMFAR */
         "MOVS   R1, #1                          \n"
         "STR    R1, [R2, #56]                   \n"
+
+        /* Signal MemManage via USART1 + LED blink */
+        "LDR    R3, =0x40013800                 \n"
+        "LDR    R1, [R3, #0]                    \n"
+        "LSLS   R1, R1, #25                     \n"
+        "BPL    2f                              \n"
+        "LDR    R3, =0x40013804                 \n"
+        "MOVS   R1, #'M'                        \n"
+        "STRH   R1, [R3, #0]                    \n"
+        "2:                                     \n"
+        "LDR    R3, =0x40010C00                 \n"
+        "LDR    R1, [R3, #0]                    \n"
+        "LDR    R2, =0xF0FFFFFF                 \n"
+        "ANDS   R1, R1, R2                      \n"
+        "ORR    R1, R1, #0x03000000             \n"
+        "STR    R1, [R3, #0]                    \n"
+        "MOVS   R1, #0x0040                     \n"
+        "MOVS   R4, #3                          \n"
+        "3:                                     \n"
+        "STR    R1, [R3, #0x14]                 \n"
+        "LDR    R2, =0xFFFFF                    \n"
+        "4:    SUBS    R2, R2, #1               \n"
+        "BNE    4b                              \n"
+        "STR    R1, [R3, #0x10]                 \n"
+        "LDR    R2, =0xFFFFF                    \n"
+        "5:    SUBS    R2, R2, #1               \n"
+        "BNE    5b                              \n"
+        "SUBS   R4, R4, #1                      \n"
+        "BNE    3b                              \n"
         "B      .                               \n"
     );
 }
@@ -402,6 +553,35 @@ __attribute__((naked)) void BusFault_Handler(void)
         "STR    R1, [R2, #44]                   \n"  /* BFAR */
         "MOVS   R1, #2                          \n"
         "STR    R1, [R2, #56]                   \n"
+
+        /* Signal BusFault via USART1 + LED blink */
+        "LDR    R3, =0x40013800                 \n"
+        "LDR    R1, [R3, #0]                    \n"
+        "LSLS   R1, R1, #25                     \n"
+        "BPL    2f                              \n"
+        "LDR    R3, =0x40013804                 \n"
+        "MOVS   R1, #'B'                        \n"
+        "STRH   R1, [R3, #0]                    \n"
+        "2:                                     \n"
+        "LDR    R3, =0x40010C00                 \n"
+        "LDR    R1, [R3, #0]                    \n"
+        "LDR    R2, =0xF0FFFFFF                 \n"
+        "ANDS   R1, R1, R2                      \n"
+        "ORR    R1, R1, #0x03000000             \n"
+        "STR    R1, [R3, #0]                    \n"
+        "MOVS   R1, #0x0040                     \n"
+        "MOVS   R4, #3                          \n"
+        "3:                                     \n"
+        "STR    R1, [R3, #0x14]                 \n"
+        "LDR    R2, =0xFFFFF                    \n"
+        "4:    SUBS    R2, R2, #1               \n"
+        "BNE    4b                              \n"
+        "STR    R1, [R3, #0x10]                 \n"
+        "LDR    R2, =0xFFFFF                    \n"
+        "5:    SUBS    R2, R2, #1               \n"
+        "BNE    5b                              \n"
+        "SUBS   R4, R4, #1                      \n"
+        "BNE    3b                              \n"
         "B      .                               \n"
     );
 }

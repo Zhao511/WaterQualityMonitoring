@@ -30,6 +30,8 @@ class SettingsFragment : Fragment() {
         binding.inputAk.setText(prefs.ak)
         binding.inputSk.setText(prefs.sk)
         binding.inputProjectId.setText(prefs.projectId)
+        binding.inputProductId.setText(prefs.productId)
+        binding.inputEndpoint.setText(prefs.endpoint)
         binding.switchAutoMode.isChecked = prefs.isAutoMode
         binding.labelMode.text = if (prefs.isAutoMode) "自动模式" else "手动模式"
 
@@ -55,14 +57,16 @@ class SettingsFragment : Fragment() {
             val ak = binding.inputAk.text.toString().trim()
             val sk = binding.inputSk.text.toString().trim()
             val pid = binding.inputProjectId.text.toString().trim()
-            android.util.Log.d("SETTINGS", "AK len=${ak.length} SK len=${sk.length} PID len=${pid.length} akPref=${prefs.ak.length}")
+            val productId = binding.inputProductId.text.toString().trim()
+            val endpoint = binding.inputEndpoint.text.toString().trim()
+            android.util.Log.d("SETTINGS", "AK len=${ak.length} SK len=${sk.length} PID len=${pid.length} ProductId len=${productId.length} Endpoint len=${endpoint.length}")
             if (ak.isEmpty() || sk.isEmpty() || pid.isEmpty()) {
-                Toast.makeText(requireContext(), "请填写完整 AK(长${ak.length}) SK(长${sk.length}) PID(长${pid.length})", Toast.LENGTH_LONG).show()
+                Toast.makeText(requireContext(), "请填写完整 AK SK 项目ID", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             binding.btnConnect.isEnabled = false
             binding.labelConnStatus.text = "连接中..."
-            homeVM.connect(ak, sk, pid) { success, msg ->
+            homeVM.connect(ak, sk, pid, productId, endpoint) { success, msg ->
                 binding.btnConnect.isEnabled = true
                 if (success) {
                     showConnected()

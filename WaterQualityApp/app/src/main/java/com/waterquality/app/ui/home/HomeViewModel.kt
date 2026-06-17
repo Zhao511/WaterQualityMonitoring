@@ -16,8 +16,8 @@ class HomeViewModel : ViewModel() {
     val isConnected get() = ConnectionManager.isConnected
     val isAutoMode get() = ConnectionManager.isAutoMode
 
-    fun connect(ak: String, sk: String, pid: String, cb: ((Boolean, String) -> Unit)? = null) =
-        ConnectionManager.connect(ak, sk, pid, cb)
+    fun connect(ak: String, sk: String, pid: String, productId: String = "", endpoint: String = "", cb: ((Boolean, String) -> Unit)? = null) =
+        ConnectionManager.connect(ak, sk, pid, productId, endpoint, cb)
 
     fun autoConnect(cb: ((Boolean, String) -> Unit)? = null) =
         ConnectionManager.autoConnect(cb)

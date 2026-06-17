@@ -23,6 +23,14 @@ class PreferencesManager(context: Context) {
         get() = prefs.getString("projectId", "") ?: ""
         set(v) = prefs.edit().putString("projectId", v).apply()
 
+    var productId: String
+        get() = prefs.getString("productId", "") ?: ""
+        set(v) = prefs.edit().putString("productId", v).apply()
+
+    var endpoint: String
+        get() = prefs.getString("endpoint", "") ?: ""
+        set(v) = prefs.edit().putString("endpoint", v).apply()
+
     var isAutoMode: Boolean
         get() = prefs.getBoolean("autoMode", false)
         set(v) = prefs.edit().putBoolean("autoMode", v).apply()

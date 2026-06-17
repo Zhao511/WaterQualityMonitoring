@@ -425,6 +425,8 @@ app.post('/api/config', function(req, res) {
     if (b.ak) hwConfig.ak = b.ak.trim();
     if (b.sk) hwConfig.sk = b.sk.trim();
     if (b.projectId) hwConfig.projectId = b.projectId.trim();
+    if (b.productId) hwConfig.productId = b.productId.trim();
+    if (b.endpoint) hwConfig.endpoint = b.endpoint.trim();
     var clientId = b.clientId || '';
     console.log('[CONFIG] AK长度:', hwConfig.ak.length, 'SK长度:', hwConfig.sk.length,
                 'AK首字符:', hwConfig.ak.substring(0, 4), 'SK首字符:', hwConfig.sk.substring(0, 4),

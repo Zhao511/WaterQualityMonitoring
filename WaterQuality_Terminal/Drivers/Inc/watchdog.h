@@ -20,19 +20,12 @@
 
 #include "stm32f10x.h"
 
-/* ================================================================
- * IWDG 寄存器定义 (基地址 0x40003000, APB1 总线)
- * ================================================================ */
-#define IWDG_BASE               ((uint32_t)0x40003000)
-
-typedef struct {
-    __IO uint32_t KR;           /* 密钥寄存器    offset 0x00 */
-    __IO uint32_t PR;           /* 预分频寄存器  offset 0x04 */
-    __IO uint32_t RLR;          /* 重装载寄存器  offset 0x08 */
-    __IO uint32_t SR;           /* 状态寄存器    offset 0x0C */
-} IWDG_TypeDef;
-
-#define IWDG                    ((IWDG_TypeDef *) IWDG_BASE)
+/*
+ * 注: IWDG_BASE / IWDG_TypeDef / DBGMCU_BASE / DBGMCU_TypeDef /
+ *     RCC_CSR_LSION / RCC_CSR_LSIRDY 等寄存器级定义
+ *     现在由 V3.5.0 CMSIS stm32f10x.h 提供, 不再在此重复。
+ *     这里只保留 IWDG 应用层简写宏 (SPL stm32f10x_iwdg.h 用的是不同命名)。
+ */
 
 /* ---- IWDG 密钥值 (写入 KR) ---- */
 #define IWDG_KEY_ENABLE_WRITE   ((uint16_t)0x5555)   /* 解锁 PR/RLR 写保护 */
@@ -52,25 +45,7 @@ typedef struct {
 #define IWDG_FLAG_PVU           ((uint16_t)0x0001)   /* 预分频器更新中 */
 #define IWDG_FLAG_RVU           ((uint16_t)0x0002)   /* 重装载值更新中 */
 
-/* ================================================================
- * DBGMCU 寄存器定义 (基地址 0xE0042000, Cortex-M3 系统地址)
- * ================================================================ */
-#define DBGMCU_BASE             ((uint32_t)0xE0042000)
-
-typedef struct {
-    __IO uint32_t IDCODE;       /* ID 码寄存器   offset 0x00 */
-    __IO uint32_t CR;           /* 控制寄存器    offset 0x04 */
-} DBGMCU_TypeDef;
-
-#define DBGMCU                  ((DBGMCU_TypeDef *) DBGMCU_BASE)
-
 #define DBGMCU_CR_DBG_IWDG_STOP ((uint32_t)0x00000100)  /* Bit 8: 调试时停止 IWDG */
-
-/* ================================================================
- * RCC CSR 寄存器 LSI 控制位
- * ================================================================ */
-#define RCC_CSR_LSION           ((uint32_t)0x00000001)   /* 内部低速时钟使能 */
-#define RCC_CSR_LSIRDY          ((uint32_t)0x00000002)   /* 内部低速时钟就绪 */
 
 /* ================================================================
  * IWDG 超时计算
@@ -95,7 +70,7 @@ typedef enum {
 #define HB_TIMEOUT_SENSOR_MS    ((TickType_t)3000)
 #define HB_TIMEOUT_GPS_MS       ((TickType_t)1000)
 #define HB_TIMEOUT_IOT_MS       ((TickType_t)5000)
-#define HB_TIMEOUT_RFID_MS      ((TickType_t)1500)
+#define HB_TIMEOUT_RFID_MS      ((TickType_t)3000)
 #define HB_TIMEOUT_LED_MS       ((TickType_t)10000)
 
 /* ================================================================

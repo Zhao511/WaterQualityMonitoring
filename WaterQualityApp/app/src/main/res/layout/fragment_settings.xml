@@ -57,6 +57,18 @@
                     android:hint="Project ID" android:inputType="text"
                     android:background="@drawable/edit_bg" android:paddingHorizontal="12dp" />
 
+                <EditText android:id="@+id/input_product_id"
+                    android:layout_width="match_parent" android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:hint="Product ID (产品ID)" android:inputType="text"
+                    android:background="@drawable/edit_bg" android:paddingHorizontal="12dp" />
+
+                <EditText android:id="@+id/input_endpoint"
+                    android:layout_width="match_parent" android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:hint="Endpoint (接入点)" android:inputType="textUri"
+                    android:background="@drawable/edit_bg" android:paddingHorizontal="12dp" />
+
                 <Button android:id="@+id/btn_connect"
                     android:layout_width="match_parent" android:layout_height="44dp"
                     android:layout_marginTop="12dp"

@@ -6,15 +6,20 @@ import com.huaweicloud.sdk.iotda.v5.IoTDAClient
 import com.huaweicloud.sdk.iotda.v5.model.*
 
 class IoTDAApi {
-    private val endpoint = "https://YOUR_INSTANCE_ID.st1.iotda-app.cn-south-1.myhuaweicloud.com"  /* TODO */
+    private var endpoint: String = ""
     private var client: IoTDAClient? = null
     private var projectId: String = ""
+    private var productId: String = ""
     var isConnected: Boolean = false
         private set
 
-    fun configure(ak: String, sk: String, projectId: String) {
+    fun configure(ak: String, sk: String, projectId: String, productId: String = "", endpoint: String = "") {
         this.projectId = projectId
-        android.util.Log.d("IOTDA", "configure: ak=$ak projectId=$projectId")
+        this.productId = productId
+        this.endpoint = endpoint.ifEmpty {
+            "https://YOUR_INSTANCE_ID.st1.iotda-app.cn-south-1.myhuaweicloud.com"
+        }
+        android.util.Log.d("IOTDA", "configure: ak=$ak projectId=$projectId productId=$productId endpoint=${this.endpoint}")
 
         val credentials = BasicCredentials()
             .withAk(ak)
@@ -66,7 +71,7 @@ class IoTDAApi {
     fun listDevices(): List<QueryDeviceSimplify> {
         val c = client ?: throw IllegalStateException("请先配置 AK/SK")
         val req = ListDevicesRequest()
-        req.productId = "YOUR_PRODUCT_ID"  /* TODO: 华为云产品ID */
+        if (productId.isNotEmpty()) req.productId = productId
         val res = c.listDevices(req)
         return res.devices ?: emptyList()
     }

@@ -80,12 +80,16 @@ void Debug_Printf(const char *format, ...)
 
     /*
      * 使用静态缓冲区替代栈缓冲区，消除每次调用消耗 128 字节栈空间的隐患。
-     * taskENTER_CRITICAL() 防止 ISR 与任务级调用竞争同一缓冲区。
+     * 临界区只保护 vsnprintf (格式化到静态缓冲区), 不保护 UART 发送。
+     * 这样 SysTick 可以在 UART 发送期间正常触发, 避免饿死低优先级任务。
+     * UART 字符级互锁: TXE 忙等保证同一时刻只有一个发送者占用 TX 线。
      */
     taskENTER_CRITICAL();
     va_start(args, format);
     vsnprintf(debug_printf_buf, sizeof(debug_printf_buf), format, args);
     va_end(args);
-    Debug_SendString(debug_printf_buf);
     taskEXIT_CRITICAL();
+
+    /* UART 发送在临界区外 — 中断使能, 调度器正常工作 */
+    Debug_SendString(debug_printf_buf);
 }

@@ -43,7 +43,7 @@ static const char * const hb_periods[HEARTBEAT_COUNT] = {
 };
 
 static const uint32_t hb_stack_words[HEARTBEAT_COUNT] = {
-    256, 256, 512, 128, 128
+    384, 256, 512, 128, 128
 };
 
 /* ================================================================

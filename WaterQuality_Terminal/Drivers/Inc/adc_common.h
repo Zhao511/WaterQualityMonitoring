@@ -20,6 +20,9 @@
 #define ADC_CH_TURBIDITY  ADC_Channel_2   /* PA2 - 浊度传感器 */
 #define ADC_CH_TEMP       ADC_Channel_3   /* PA3 - 温度传感器 */
 
+/* 浊度传感器使能开关 (0=禁用, 1=启用) */
+#define TURBIDITY_SENSOR_ENABLED  0
+
 /* 状态码 */
 #define ADC_READ_OK        0
 #define ADC_READ_TIMEOUT   1

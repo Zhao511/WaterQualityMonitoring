@@ -38,7 +38,7 @@
           <bCustSvd>0</bCustSvd>
           <UseEnv>0</UseEnv>
           <BinPath></BinPath>
-          <IncludePath>.\Core\Inc;.\Drivers\Inc;.\Libraries\STM32F10x_StdPeriph_Driver\inc;.\FreeRTOS\inc;.\FreeRTOS-Kernel\FreeRTOS-Kernel\include;.\FreeRTOS-Kernel\FreeRTOS-Kernel\portable\RVDS\ARM_CM3</IncludePath>
+          <IncludePath>.\Core\Inc;.\Drivers\Inc;.\Libraries\STM32F10x_StdPeriph_Driver\inc;.\Libraries\CMSIS\CoreSupport;.\Libraries\CMSIS\DeviceSupport;.\FreeRTOS\inc;.\FreeRTOS-Kernel\FreeRTOS-Kernel\include;.\FreeRTOS-Kernel\FreeRTOS-Kernel\portable\RVDS\ARM_CM3</IncludePath>
           <LibPath></LibPath>
           <RegisterFilePath></RegisterFilePath>
           <DBRegisterFilePath></DBRegisterFilePath>
@@ -337,7 +337,7 @@
               <MiscControls></MiscControls>
               <Define>USE_STDPERIPH_DRIVER,STM32F10X_MD</Define>
               <Undefine></Undefine>
-              <IncludePath>.\Core\Inc;.\Drivers\Inc;.\Libraries\STM32F10x_StdPeriph_Driver\inc;.\FreeRTOS\inc;.\FreeRTOS-Kernel\FreeRTOS-Kernel\include;.\FreeRTOS-Kernel\FreeRTOS-Kernel\portable\RVDS\ARM_CM3</IncludePath>
+              <IncludePath>.\Core\Inc;.\Drivers\Inc;.\Libraries\STM32F10x_StdPeriph_Driver\inc;.\Libraries\CMSIS\CoreSupport;.\Libraries\CMSIS\DeviceSupport;.\FreeRTOS\inc;.\FreeRTOS-Kernel\FreeRTOS-Kernel\include;.\FreeRTOS-Kernel\FreeRTOS-Kernel\portable\RVDS\ARM_CM3</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>

@@ -43,7 +43,7 @@ object ConnectionManager {
     val isConnected: Boolean get() = api.isConnected
     val isAutoMode: Boolean get() = prefs.isAutoMode
 
-    fun connect(ak: String, sk: String, projectId: String, onResult: ((Boolean, String) -> Unit)? = null) {
+    fun connect(ak: String, sk: String, projectId: String, productId: String = "", endpoint: String = "", onResult: ((Boolean, String) -> Unit)? = null) {
         if (_connecting.value == true) {
             onResult?.invoke(false, "正在连接中，请稍候")
             return
@@ -53,10 +53,11 @@ object ConnectionManager {
         scope.launch(Dispatchers.IO) {
             try {
                 api.disconnect()
-                api.configure(ak, sk, projectId)
+                api.configure(ak, sk, projectId, productId, endpoint)
                 val result = api.verify()
                 if (result.isSuccess) {
                     prefs.ak = ak; prefs.sk = sk; prefs.projectId = projectId
+                    prefs.productId = productId; prefs.endpoint = endpoint
                     // 立即同步设备列表到 LiveData
                     val devices = repository.syncDevices()
                     _devices.postValue(devices)
@@ -88,7 +89,7 @@ object ConnectionManager {
     fun autoConnect(onResult: ((Boolean, String) -> Unit)? = null) {
         if (prefs.ak.isEmpty() || prefs.sk.isEmpty()) return
         if (isConnected || _connecting.value == true) return  // 防止重复连接
-        connect(prefs.ak, prefs.sk, prefs.projectId, onResult)
+        connect(prefs.ak, prefs.sk, prefs.projectId, prefs.productId, prefs.endpoint, onResult)
     }
 
     fun disconnect() {

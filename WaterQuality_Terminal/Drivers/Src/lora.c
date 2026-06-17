@@ -7,6 +7,9 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 /* 兼容旧 ISR 的线形缓冲区 */
 uint8_t  lora_rx_buffer[LORA_BUFFER_SIZE];
 uint16_t lora_rx_index = 0;
@@ -14,13 +17,10 @@ uint16_t lora_rx_index = 0;
 /* 高效的环形缓冲区 */
 RingBuffer lora_rb;
 
-/* 简易延时 (非精确, ~72MHz 下约 1ms 循环 12000 次) */
+/* FreeRTOS 任务延时 (替代忙等, 让出 CPU 给低优先级任务) */
 static void Lora_DelayMs(volatile uint32_t ms)
 {
-    while (ms--) {
-        volatile uint32_t i = 8000;
-        while (i--) { __NOP(); }
-    }
+    vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
 /* ========== GPIO 控制 ========== */

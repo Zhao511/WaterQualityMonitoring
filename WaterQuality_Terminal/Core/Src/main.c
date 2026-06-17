@@ -9,7 +9,7 @@
  * 任务架构 (6 个任务):
  *
  *   vWatchdogTask(Prio 4, Stack 128W) — IWDG 看门狗监控 + 心跳检查
- *   vSensorTask  (Prio 3, Stack 256W) — 传感器 1s 采集 + 告警判定
+ *   vSensorTask  (Prio 3, Stack 384W) — 传感器 1s 采集 + 告警判定
  *   vGPSTask     (Prio 2, Stack 256W) — GPS 200ms 轮询 + NMEA→Decimal
  *   vIOTTask     (Prio 2, Stack 512W) — LoRa 收发 + 4 服务上报 + 命令处理
  *   vRFIDTask    (Prio 1, Stack 128W) — RFID 500ms 扫描
@@ -47,6 +47,13 @@
 #include <string.h>
 
 /* ================================================================
+ * 编译期开关: 原始 ADC 诊断输出
+ *   0 = 禁用 (生产模式, 节省栈空间)
+ *   1 = 启用 (调试模式, 每 60 轮输出一次原始 ADC 值)
+ * ================================================================ */
+#define RAW_ADC_DEBUG_ENABLED  0
+
+/* ================================================================
  * 全局物模型实例 (iot_service.h 中 extern 声明)
  * ================================================================ */
 WaterStatus  g_water_status;
@@ -80,6 +87,7 @@ static QueueHandle_t xAlarmQueue   = NULL;   /* 告警事件队列 */
 static SemaphoreHandle_t xDebugMutex = NULL;
 static SemaphoreHandle_t xWaterMutex = NULL;  /* 保护 g_water_status 并发访问 */
 static SemaphoreHandle_t xGPSMutex   = NULL;  /* 保护 g_gps_data 并发访问 */
+SemaphoreHandle_t xADCMutex   = NULL;  /* 保护 ADC1 并发访问 (extern 给 adc_common.c) */
 static TaskHandle_t xWatchdogTaskHandle = NULL;
 
 /* 任务运行计数器 (周期性日志输出, 避免刷屏) */
@@ -159,13 +167,25 @@ static void vSensorTask(void *pvParameters)
 
     for (;;)
     {
+        /* 首次启动延时: 确保 ADC、传感器供电和外部电路完全稳定 */
+        if (g_sensor_cycle == 0) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+
         /* 读取所有传感器 + 校准 + 物理范围验证 */
         float raw_ph, raw_temp, raw_tds;
 
         raw_ph = IOT_Apply_Calibration("ph", PH_Sensor_Read());
         IOT_Validate_SensorData("ph", raw_ph, &sensor_data.ph);
 
+#if TURBIDITY_SENSOR_ENABLED
+        {
+            float raw_turb = IOT_Apply_Calibration("turbidity", Turbidity_Sensor_Read());
+            IOT_Validate_SensorData("turbidity", raw_turb, &sensor_data.turbidity);
+        }
+#else
         sensor_data.turbidity   = 0;  /* 无浊度传感器, 固定为 0 */
+#endif
 
         raw_temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
         IOT_Validate_SensorData("temp", raw_temp, &sensor_data.temperature);
@@ -223,6 +243,29 @@ static void vSensorTask(void *pvParameters)
                 xSemaphoreGive(xDebugMutex);
             }
         }
+
+#if RAW_ADC_DEBUG_ENABLED
+        /* 诊断: 每 10 轮 (~10s) 输出原始 ADC 采样值
+         *   - 放在 WDG_Heartbeat 之后: 故障前心跳已上报
+         *   - 使用 xDebugMutex 保护 Debug_Printf */
+        if ((g_sensor_cycle % 10) == 0) {
+            uint16_t r_ph, r_tds, r_turb, r_temp;
+            uint8_t  ok_ph, ok_tds, ok_turb, ok_temp;
+            ok_ph   = ADC_ReadChannel(ADC_CH_PH,        &r_ph);
+            ok_tds  = ADC_ReadChannel(ADC_CH_TDS,       &r_tds);
+            ok_turb = ADC_ReadChannel(ADC_CH_TURBIDITY, &r_turb);
+            ok_temp = ADC_ReadChannel(ADC_CH_TEMP,      &r_temp);
+            if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
+                Debug_Printf("[RAW ADC] cycle=%lu | pH=%s%u TDS=%s%u Turb=%s%u Temp=%s%u\r\n",
+                             g_sensor_cycle,
+                             (ok_ph   == ADC_READ_OK) ? "" : "TMO:", r_ph,
+                             (ok_tds  == ADC_READ_OK) ? "" : "TMO:", r_tds,
+                             (ok_turb == ADC_READ_OK) ? "" : "TMO:", r_turb,
+                             (ok_temp == ADC_READ_OK) ? "" : "TMO:", r_temp);
+                xSemaphoreGive(xDebugMutex);
+            }
+        }
+#endif
 
         vTaskDelayUntil(&xLastWakeTime, xPeriod);
     }
@@ -364,8 +407,10 @@ static void vIOTTask(void *pvParameters)
 
     for (;;)
     {
-        /* 诊断: 每次循环无条件输出, 用于定位任务是否在运行 */
-        Debug_Printf("[IoT] alive tick=%lu\r\n", tick_count);
+        /* 诊断: 每 10 轮输出一次, 减少串口开销避免饿死低优先级任务 */
+        if ((tick_count % 10) == 0) {
+            Debug_Printf("[IoT] alive tick=%lu\r\n", tick_count);
+        }
 
         /* --- LoRa 下行命令处理 (每次循环都检查) --- */
         IOT_Process_Incoming();
@@ -667,17 +712,21 @@ int main(void)
     xDebugMutex  = xSemaphoreCreateMutex();
     xWaterMutex  = xSemaphoreCreateMutex();            /* 保护 g_water_status */
     xGPSMutex    = xSemaphoreCreateMutex();            /* 保护 g_gps_data      */
+    xADCMutex    = xSemaphoreCreateMutex();            /* 保护 ADC1 并发访问   */
 
     /* 验证内核对象 */
     if (xSensorQueue == NULL || xGPSQueue    == NULL ||
         xRFIDQueue   == NULL || xLEDQueue    == NULL ||
         xAlarmQueue  == NULL || xDebugMutex  == NULL || xWaterMutex == NULL ||
-        xGPSMutex    == NULL)
+        xGPSMutex    == NULL || xADCMutex    == NULL)
     {
         LED_RGB_SetColor(LED_COLOR_RED);
         Debug_Printf("FATAL: Failed to create RTOS objects!\r\n");
         for (;;) { __NOP(); }
     }
+
+    Debug_Printf("RTOS heap free: %lu bytes\r\n",
+                 (unsigned long)xPortGetFreeHeapSize());
 
     /* ---- 初始化 IWDG 看门狗 ---- */
     WDG_Init();
@@ -690,7 +739,7 @@ int main(void)
     ret = xTaskCreate(vWatchdogTask, "Watchdog", 128, NULL, 4, &xWatchdogTaskHandle);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
-    ret = xTaskCreate(vSensorTask, "Sensor", 256, NULL, 3, &xSensorTaskHandle);
+    ret = xTaskCreate(vSensorTask, "Sensor", 384, NULL, 3, &xSensorTaskHandle);
     if (ret != pdPASS) { LED_RGB_SetColor(LED_COLOR_RED); for (;;); }
 
     ret = xTaskCreate(vGPSTask,   "GPS",    256, NULL, 2, NULL);
