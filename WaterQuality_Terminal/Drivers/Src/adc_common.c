@@ -14,8 +14,8 @@ extern SemaphoreHandle_t xADCMutex;
   * 函    数：ADC及GPIO初始化（参考江科大7-1 AD单通道教程 + ST官方V3.5.0库）
   * 参    数：无
   * 返 回 值：无
-  * 说    明：统一初始化ADC1及传感器GPIO（PA0~PA3）
-  *          pH=PA0, TDS=PA1, Temp=PA3
+  * 说    明：统一初始化ADC1及传感器GPIO（PA0/PA1/PA4）
+  *          pH=PA0, TDS=PA1, Temp=PA4
   */
 void ADC_Common_Init(void)
 {
@@ -32,9 +32,9 @@ void ADC_Common_Init(void)
 	{
 		GPIO_InitTypeDef GPIO_InitStructure;				//定义结构体变量
 		GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;		//模式，选择模拟输入
-		GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_2 | GPIO_Pin_3;
+		GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_4;
 		GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-		GPIO_Init(GPIOA, &GPIO_InitStructure);				//将PA0~PA3初始化为模拟输入
+		GPIO_Init(GPIOA, &GPIO_InitStructure);				//将PA0/PA1/PA4初始化为模拟输入
 	}
 
 	Debug_Printf("  [ADC] GPIO...\r\n");
@@ -45,7 +45,7 @@ void ADC_Common_Init(void)
 	/*规则组通道配置（放在Init之前，对齐江科大教程顺序）*/
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_0, 1, ADC_SampleTime_55Cycles5);	//PA0, 序列1
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_1, 2, ADC_SampleTime_55Cycles5);	//PA1, 序列2
-	ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 3, ADC_SampleTime_55Cycles5);	//PA3, 序列3
+	ADC_RegularChannelConfig(ADC1, ADC_Channel_4, 3, ADC_SampleTime_55Cycles5);	//PA4, 序列3
 
 	/*ADC初始化*/
 	{

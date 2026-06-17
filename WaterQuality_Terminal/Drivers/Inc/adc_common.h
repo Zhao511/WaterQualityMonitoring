@@ -17,7 +17,7 @@
 /* ADC 通道定义 */
 #define ADC_CH_PH         ADC_Channel_0   /* PA0 - pH 传感器 */
 #define ADC_CH_TDS        ADC_Channel_1   /* PA1 - TDS 传感器 */
-#define ADC_CH_TEMP       ADC_Channel_3   /* PA3 - 温度传感器 */
+#define ADC_CH_TEMP       ADC_Channel_4   /* PA4 - 温度传感器 */
 
 /* 状态码 */
 #define ADC_READ_OK        0
