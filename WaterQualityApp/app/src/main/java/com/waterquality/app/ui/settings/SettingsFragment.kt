@@ -8,6 +8,7 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import com.waterquality.app.R
 import com.waterquality.app.databinding.FragmentSettingsBinding
 import com.waterquality.app.data.model.Thresholds
 import com.waterquality.app.ui.home.HomeViewModel
@@ -133,6 +134,19 @@ class SettingsFragment : Fragment() {
         binding.switchAutoMode.setOnCheckedChangeListener { _, checked ->
             homeVM.setAutoMode(checked)
             binding.labelMode.text = if (checked) "自动模式" else "手动模式"
+        }
+
+        // 清除本地缓存
+        view.findViewById<android.widget.Button>(R.id.btn_clear_cache).setOnClickListener {
+            com.waterquality.app.data.local.PreferencesManager(requireContext()).apply {
+                ak = ""; sk = ""; projectId = ""; productId = ""; endpoint = ""
+            }
+            binding.inputAk.setText("")
+            binding.inputSk.setText("")
+            binding.inputProjectId.setText("")
+            binding.inputProductId.setText("")
+            binding.inputEndpoint.setText("")
+            Toast.makeText(requireContext(), "本地缓存已清除", Toast.LENGTH_SHORT).show()
         }
     }
 

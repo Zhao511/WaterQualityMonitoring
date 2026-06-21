@@ -10,13 +10,19 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Device info bar -->
+        <!-- Device info bar with status LED -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:padding="8dp">
+            <View
+                android:id="@+id/status_light"
+                android:layout_width="12dp"
+                android:layout_height="12dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/edit_bg" />
             <TextView android:id="@+id/device_name" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content"
                 android:text="选择设备" android:textSize="18sp" android:textStyle="bold" />
@@ -26,7 +32,7 @@
                 android:background="#E0E0E0" android:textColor="#999" />
         </LinearLayout>
 
-        <!-- Gauges row 1 -->
+        <!-- Gauges row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="220dp"
@@ -52,7 +58,7 @@
                 android:layout_weight="1" />
         </LinearLayout>
 
-        <!-- Device status row -->
+        <!-- Device status row 1 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -98,6 +104,26 @@
                 android:background="#FFF" android:layout_margin="2dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="工作状态" android:textSize="11sp" android:textColor="#999" />
                 <TextView android:id="@+id/work_state_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Extra info: GPS status + last report -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="4dp"
+            style="?android:attr/buttonBarStyle">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="GPS状态" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/gps_status_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2" android:orientation="vertical" android:padding="8dp"
+                android:background="#FFF" android:layout_margin="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="最后上报" android:textSize="11sp" android:textColor="#999" />
+                <TextView android:id="@+id/last_report_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 

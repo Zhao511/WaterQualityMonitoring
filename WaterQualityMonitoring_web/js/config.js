@@ -41,13 +41,21 @@ function getAllDevices() {
     return Object.values(CONFIG.devices);
 }
 
-// 删除设备
-function removeDevice(deviceId) {
-    if (CONFIG.devices[deviceId] && deviceId !== CONFIG.currentDeviceId) {
-        delete CONFIG.devices[deviceId];
-        saveConfig();
-        showToast('设备已删除', 'info');
-    }
+// 删除设备（调用后端API）
+function deleteDeviceFromServer(deviceId) {
+    var dev = CONFIG.devices[deviceId];
+    if (!dev) return Promise.reject(new Error('设备不存在'));
+    return api('/api/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' });
+}
+
+// 更新设备信息（调用后端API）
+function updateDeviceOnServer(deviceId, updates) {
+    var dev = CONFIG.devices[deviceId];
+    if (!dev) return Promise.reject(new Error('设备不存在'));
+    return api('/api/devices/' + encodeURIComponent(deviceId), {
+        method: 'PUT',
+        body: updates
+    });
 }
 
 // 从localStorage加载配置

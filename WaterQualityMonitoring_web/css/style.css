@@ -523,6 +523,10 @@ body {
     font-size: 12px;
 }
 
+.device-table td .btn-xs + .btn-xs {
+    margin-left: 4px;
+}
+
 /* Toast提示 */
 .toast {
     position: fixed;

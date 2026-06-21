@@ -2,6 +2,12 @@
 <resources>
     <string name="app_name">智慧水质监测</string>
     <string name="nav_home">实时监测</string>
+    <string name="nav_alarms">告警记录</string>
     <string name="nav_devices">设备管理</string>
     <string name="nav_settings">系统设置</string>
+    <string name="log_type_all">全部</string>
+    <string name="log_type_info">信息</string>
+    <string name="log_type_success">成功</string>
+    <string name="log_type_warning">警告</string>
+    <string name="log_type_error">错误</string>
 </resources>

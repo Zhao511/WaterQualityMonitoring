@@ -12,6 +12,7 @@ data class Device(
     val workState: String = "",
     val lastReport: String = "",
     val rfid: String = "",
+    val sourceDeviceId: String = "",   // 华为云原始 device_id
     val longitude: Double = 0.0,
     val latitude: Double = 0.0,
     val gpsStatus: String = "",

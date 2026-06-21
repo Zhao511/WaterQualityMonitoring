@@ -6,6 +6,7 @@ import androidx.fragment.app.Fragment
 import com.waterquality.app.data.local.PreferencesManager
 import com.waterquality.app.data.remote.ConnectionManager
 import com.waterquality.app.databinding.ActivityMainBinding
+import com.waterquality.app.ui.alarm.AlarmFragment
 import com.waterquality.app.ui.device.DeviceListFragment
 import com.waterquality.app.ui.home.HomeFragment
 import com.waterquality.app.ui.settings.SettingsFragment
@@ -13,6 +14,7 @@ import com.waterquality.app.ui.settings.SettingsFragment
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var homeFragment: HomeFragment? = null
+    private var alarmFragment: AlarmFragment? = null
     private var deviceFragment: DeviceListFragment? = null
     private var settingsFragment: SettingsFragment? = null
     private var activeFragment: Fragment? = null
@@ -33,6 +35,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         homeFragment = HomeFragment()
+        alarmFragment = AlarmFragment()
         deviceFragment = DeviceListFragment()
         settingsFragment = SettingsFragment()
 
@@ -44,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNav.setOnItemSelectedListener { item ->
             when (item.itemId) {
                 R.id.nav_home -> showFragment(homeFragment!!)
+                R.id.nav_alarms -> showFragment(alarmFragment!!)
                 R.id.nav_devices -> showFragment(deviceFragment!!)
                 R.id.nav_settings -> showFragment(settingsFragment!!)
             }

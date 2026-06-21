@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingVertical="8dp"
+    android:paddingHorizontal="4dp"
+    android:background="?android:attr/selectableItemBackground"
+    android:minHeight="48dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.2"
+        android:orientation="vertical">
+        <TextView android:id="@+id/txt_dev_rfid" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:textSize="12sp" android:textColor="#2c3e50" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/txt_dev_location" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:textSize="10sp" android:textColor="#95a5a6" android:maxLines="1" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/txt_dev_name" android:layout_width="0dp"
+        android:layout_height="wrap_content" android:layout_weight="1" android:textSize="12sp" android:textColor="#2c3e50" android:maxLines="1" android:ellipsize="end" />
+
+    <TextView android:id="@+id/txt_dev_status" android:layout_width="0dp"
+        android:layout_height="wrap_content" android:layout_weight="0.7" android:textSize="11sp" android:gravity="center" android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.8"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button android:id="@+id/btn_dev_view" android:layout_width="wrap_content"
+            android:layout_height="28dp" android:text="查看" android:textSize="10sp"
+            android:minWidth="0dp" android:paddingHorizontal="6dp" android:layout_marginEnd="2dp" />
+
+        <Button android:id="@+id/btn_dev_edit" android:layout_width="wrap_content"
+            android:layout_height="28dp" android:text="编辑" android:textSize="10sp"
+            android:minWidth="0dp" android:paddingHorizontal="6dp" android:layout_marginEnd="2dp"
+            android:backgroundTint="#3498db" />
+
+        <Button android:id="@+id/btn_dev_delete" android:layout_width="wrap_content"
+            android:layout_height="28dp" android:text="删除" android:textSize="10sp"
+            android:minWidth="0dp" android:paddingHorizontal="6dp"
+            android:backgroundTint="#e74c3c" />
+    </LinearLayout>
+</LinearLayout>

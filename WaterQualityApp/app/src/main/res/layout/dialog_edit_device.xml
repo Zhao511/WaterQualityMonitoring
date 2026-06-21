@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="设备名称（别名）"
+        android:textSize="13sp"
+        android:textColor="#2c3e50"
+        android:layout_marginBottom="4dp" />
+
+    <EditText
+        android:id="@+id/edit_device_name"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:hint="输入设备别名"
+        android:maxLength="50"
+        android:textSize="14sp"
+        android:paddingHorizontal="12dp"
+        android:background="@android:drawable/edit_text"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="安装位置"
+        android:textSize="13sp"
+        android:textColor="#2c3e50"
+        android:layout_marginBottom="4dp" />
+
+    <EditText
+        android:id="@+id/edit_device_location"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:hint="输入安装位置"
+        android:maxLength="100"
+        android:textSize="14sp"
+        android:paddingHorizontal="12dp"
+        android:background="@android:drawable/edit_text" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="修改仅影响本地显示，不会同步到华为云IoTDA设备影子。"
+        android:textSize="11sp"
+        android:textColor="#95a5a6"
+        android:layout_marginTop="8dp" />
+</LinearLayout>

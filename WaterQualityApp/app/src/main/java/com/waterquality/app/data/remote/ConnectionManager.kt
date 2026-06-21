@@ -4,8 +4,11 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.waterquality.app.WaterQualityApp
 import com.waterquality.app.data.local.PreferencesManager
+import com.waterquality.app.data.model.Alarm
 import com.waterquality.app.data.model.Device
 import com.waterquality.app.data.model.Thresholds
+import com.waterquality.app.util.LogEntry
+import com.waterquality.app.util.LogManager
 import kotlinx.coroutines.*
 import android.util.Log
 
@@ -22,6 +25,14 @@ object ConnectionManager {
 
     private val _alarmRecords = MutableLiveData<List<String>>(emptyList())
     val alarmRecords: LiveData<List<String>> = _alarmRecords
+
+    // 结构化告警记录
+    private val _alarmList = MutableLiveData<List<Alarm>>(emptyList())
+    val alarmList: LiveData<List<Alarm>> = _alarmList
+
+    // 日志
+    private val _logs = MutableLiveData<List<LogEntry>>(emptyList())
+    val logs: LiveData<List<LogEntry>> = _logs
 
     // 内部状态 — 共用同一个 api 实例！
     private val api = IoTDAApi()
@@ -181,6 +192,7 @@ object ConnectionManager {
 
     fun updateThreshold(deviceId: String, t: Thresholds) {
         prefs.saveThresholds(deviceId, t)
+        addLog("info", deviceId, "阈值已更新: 水温<=${t.Temp_threshold}℃, pH=${t.Ph_min}-${t.Ph_max}, TDS<=${t.Tds_threshold}")
     }
 
     fun getThresholds(deviceId: String) = prefs.getThresholds(deviceId)
@@ -199,7 +211,10 @@ object ConnectionManager {
         _alarmRecords.postValue(listOf("手动触发告警 - ${dev.id}"))
         scope.launch(Dispatchers.IO) {
             repository.sendAlarmCommand(dev.id, "alert")
+            // 同时通知 Web 后端
+            WebApiService.triggerAlarm(dev.id, "手动触发")
         }
+        addLog("warning", dev.id, "手动触发告警")
     }
 
     fun stopAlarm() {
@@ -210,7 +225,10 @@ object ConnectionManager {
         _alarmRecords.postValue(emptyList())
         scope.launch(Dispatchers.IO) {
             repository.sendAlarmCommand(dev.id, "normal")
+            // 同时通知 Web 后端
+            WebApiService.stopAlarm(dev.id)
         }
+        addLog("success", dev.id, "手动关闭告警")
     }
 
     private fun checkAutoAlarm(device: Device) {
@@ -231,13 +249,98 @@ object ConnectionManager {
             if (!alarmSent) {
                 alarmSent = true
                 scope.launch { repository.sendAlarmCommand(device.id, "alert") }
+                addLog("warning", device.id, "自动告警触发: ${details.joinToString(", ")}")
             }
         } else {
             if (alarmSent) {
                 alarmSent = false
                 _alarmActive.postValue(false)
                 _alarmRecords.postValue(emptyList())
+                addLog("info", device.id, "告警已自动清除，恢复正常")
             }
         }
+    }
+
+    // ==================== 设备管理（通过 Web 后端） ====================
+
+    /** 删除设备（调用 Web 后端 DELETE API） */
+    fun deleteDevice(deviceId: String, onResult: ((Boolean, String) -> Unit)? = null) {
+        val dev = _devices.value?.find { it.id == deviceId || it.sourceDeviceId == deviceId }
+        val label = dev?.rfid ?: dev?.name ?: deviceId
+        scope.launch {
+            val result = WebApiService.deleteDevice(deviceId)
+            result.onSuccess { msg ->
+                // 从本地列表移除
+                val updatedList = _devices.value?.filter { it.id != deviceId && it.sourceDeviceId != deviceId } ?: emptyList()
+                _devices.postValue(updatedList)
+
+                // 如果删除的是当前设备，自动切换
+                if (_currentDevice.value?.id == deviceId || _currentDevice.value?.sourceDeviceId == deviceId) {
+                    val next = updatedList.find { it.status == "ONLINE" } ?: updatedList.firstOrNull()
+                    _currentDevice.postValue(next)
+                    prefs.currentDeviceId = next?.id ?: ""
+                }
+                addLog("warning", deviceId, "设备已删除: $label")
+                WebApiService.sendHeartbeat() // 保持后端心跳
+                withContext(Dispatchers.Main) { onResult?.invoke(true, msg) }
+            }
+            result.onFailure { e ->
+                withContext(Dispatchers.Main) { onResult?.invoke(false, e.message ?: "删除失败") }
+            }
+        }
+    }
+
+    /** 更新设备昵称/位置（调用 Web 后端 PUT API） */
+    fun updateDevice(deviceId: String, name: String, location: String, onResult: ((Boolean, String) -> Unit)? = null) {
+        scope.launch {
+            val result = WebApiService.updateDevice(deviceId, name, location)
+            result.onSuccess { updatedDev ->
+                // 更新本地列表
+                val updatedList = _devices.value?.map {
+                    if (it.id == deviceId || it.sourceDeviceId == deviceId) it.copy(name = name, location = location)
+                    else it
+                } ?: emptyList()
+                _devices.postValue(updatedList)
+
+                // 更新当前设备
+                if (_currentDevice.value?.id == deviceId || _currentDevice.value?.sourceDeviceId == deviceId) {
+                    _currentDevice.postValue(_currentDevice.value?.copy(name = name, location = location))
+                }
+                addLog("info", deviceId, "设备信息已更新: 名称=$name, 位置=$location")
+                withContext(Dispatchers.Main) { onResult?.invoke(true, "设备信息已更新") }
+            }
+            result.onFailure { e ->
+                withContext(Dispatchers.Main) { onResult?.invoke(false, e.message ?: "更新失败") }
+            }
+        }
+    }
+
+    /** 从 Web 后端获取设备告警记录 */
+    fun fetchAlarms(deviceId: String, limit: Int = 50) {
+        scope.launch {
+            val result = WebApiService.getDeviceAlarms(deviceId, limit)
+            result.onSuccess { (alarms, _) ->
+                _alarmList.postValue(alarms)
+            }
+            result.onFailure {
+                _alarmList.postValue(emptyList())
+            }
+        }
+    }
+
+    // ==================== 日志 ====================
+
+    fun addLog(type: String, deviceId: String, message: String) {
+        LogManager.add(type, deviceId, message)
+        _logs.postValue(LogManager.getAll())
+    }
+
+    fun refreshLogs() {
+        _logs.postValue(LogManager.getAll())
+    }
+
+    fun clearLogs() {
+        LogManager.clear()
+        _logs.postValue(emptyList())
     }
 }

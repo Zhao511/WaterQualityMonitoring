@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#f0f2f5">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="告警记录"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#2c3e50" />
+        <Button
+            android:id="@+id/btn_refresh_alarms"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="刷新"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/txt_alarm_total"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:textColor="#95a5a6"
+        android:layout_marginBottom="8dp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rv_alarms"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/txt_alarm_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="暂无告警记录"
+        android:textSize="14sp"
+        android:textColor="#999"
+        android:gravity="center"
+        android:visibility="gone" />
+</LinearLayout>

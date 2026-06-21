@@ -140,10 +140,110 @@ function renderDeviceTable() {
         html += '<td><code>' + (d.sourceDeviceId || d.id) + '</code></td>';
         html += '<td>' + statusLabel + '</td>';
         html += '<td>' + (d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : '-') + '</td>';
-        html += '<td><button class=\"btn btn-xs btn-info\" onclick=\"switchDevice(\'' + d.id + '\')\">查看</button></td>';
+        html += '<td><button class=\"btn btn-xs btn-info\" onclick=\"switchDevice(\'' + d.id + '\')\">查看</button> ';
+        html += '<button class=\"btn btn-xs btn-primary\" onclick=\"editDevice(\'' + d.id + '\')\">编辑</button> ';
+        html += '<button class=\"btn btn-xs btn-danger\" onclick=\"deleteDevice(\'' + d.id + '\')\">删除</button></td>';
         html += '</tr>';
     });
     tbody.innerHTML = html;
+}
+
+// ==================== 设备编辑与删除 ====================
+function editDevice(deviceId) {
+    var dev = CONFIG.devices[deviceId];
+    if (!dev) { showToast('设备不存在', 'error'); return; }
+    document.getElementById('edit-device-id').value = deviceId;
+    document.getElementById('edit-device-name').value = dev.name || '';
+    document.getElementById('edit-device-location').value = dev.location || '';
+    document.getElementById('editDeviceModal').style.display = 'block';
+}
+
+function closeEditModal() {
+    document.getElementById('editDeviceModal').style.display = 'none';
+}
+
+function saveDeviceEdit() {
+    var deviceId = document.getElementById('edit-device-id').value;
+    var newName = document.getElementById('edit-device-name').value.trim();
+    var newLocation = document.getElementById('edit-device-location').value.trim();
+
+    if (!newName) {
+        showToast('设备名称不能为空', 'error');
+        return;
+    }
+
+    updateDeviceOnServer(deviceId, { name: newName, location: newLocation }).then(function(res) {
+        if (res.code === 200) {
+            // 更新本地CONFIG
+            if (CONFIG.devices[deviceId]) {
+                CONFIG.devices[deviceId].name = newName;
+                CONFIG.devices[deviceId].location = newLocation;
+            }
+            saveConfig();
+            closeEditModal();
+            renderDeviceSidebar();
+            renderDeviceSelector();
+            renderDeviceTable();
+            // 如果编辑的是当前查看的设备，刷新主页显示
+            if (deviceId === CONFIG.currentDeviceId) {
+                updateWaterQualityData(getCurrentDevice());
+            }
+            addLog('info', deviceId, '设备信息已更新: 名称=' + newName + ', 位置=' + newLocation);
+            showToast('设备信息已更新', 'success');
+        } else {
+            showToast('更新失败: ' + (res.message || '未知错误'), 'error');
+        }
+    }).catch(function(err) {
+        showToast('更新失败: ' + err.message, 'error');
+    });
+}
+
+function deleteDevice(deviceId) {
+    var dev = CONFIG.devices[deviceId];
+    if (!dev) { showToast('设备不存在', 'error'); return; }
+
+    var deviceLabel = dev.rfid || dev.name || deviceId;
+    if (!confirm('确认删除设备 "' + deviceLabel + '"？\n\n此操作将删除设备数据及其历史记录和告警记录，且不可恢复。')) {
+        return;
+    }
+
+    deleteDeviceFromServer(deviceId).then(function(res) {
+        if (res.code === 200) {
+            // 从本地CONFIG中移除
+            delete CONFIG.devices[deviceId];
+            saveConfig();
+
+            // 如果删除的是当前选中设备，自动切换到其他设备
+            if (CONFIG.currentDeviceId === deviceId) {
+                var allIds = Object.keys(CONFIG.devices);
+                var pickId = '';
+                // 优先选在线设备
+                for (var i = 0; i < allIds.length; i++) {
+                    if (CONFIG.devices[allIds[i]].status === 'ONLINE') { pickId = allIds[i]; break; }
+                }
+                // 无在线设备则选第一个
+                if (!pickId && allIds.length > 0) pickId = allIds[0];
+                CONFIG.currentDeviceId = pickId;
+                if (CONFIG.currentDeviceId) {
+                    updateWaterQualityData(getCurrentDevice());
+                    initThresholdSliders();
+                    fetchAlarms(CONFIG.currentDeviceId);
+                }
+            }
+
+            // 刷新所有UI组件
+            renderDeviceSidebar();
+            renderDeviceSelector();
+            renderDeviceTable();
+
+            addLog('warning', deviceId, '设备已删除: ' + deviceLabel);
+            showToast('设备已删除', 'info');
+        } else {
+            showToast('删除失败: ' + (res.message || '未知错误'), 'error');
+        }
+    }).catch(function(err) {
+        showToast('删除失败: ' + err.message, 'error');
+    });
 }
 
 // ==================== 设备切换 ====================
@@ -156,6 +256,10 @@ function switchDevice(deviceId) {
     renderDeviceSidebar();
     renderDeviceSelector();
     fetchAlarms(deviceId);
+    // 在历史曲线页面时自动刷新图表
+    if (AppRouter.currentPage && AppRouter.currentPage.id === 'page-history') {
+        loadHistoryChart();
+    }
 }
 
 // ==================== 路由配置 ====================
@@ -180,7 +284,7 @@ var AppRouter = {
             sectionTitle: '运营首页',
             showDeviceSidebar: false,
             showDeviceBar: true,
-            init: function() { loadHistoryChart(); }
+            init: function() { populateHistoryDeviceSelect(); loadHistoryChart(); }
         },
         '/home/device-list': {
             id: 'page-device-list',
@@ -1330,17 +1434,59 @@ function updateStatsDisplay(stats, unit) {
     document.getElementById('stat-count').textContent = stats.count;
 }
 
+// 填充历史页面的设备选择器
+function populateHistoryDeviceSelect() {
+    var sel = document.getElementById('history-device');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- 请选择设备 --</option>';
+    var devices = getAllDevices();
+    devices.forEach(function(d) {
+        var label = d.rfid || d.name || d.id;
+        var selected = d.id === CONFIG.currentDeviceId ? ' selected' : '';
+        sel.innerHTML += '<option value="' + d.id + '"' + selected + '>' + label + '</option>';
+    });
+    if (!sel.value && devices.length > 0) {
+        sel.value = devices[0].id;
+        CONFIG.currentDeviceId = devices[0].id;
+    }
+}
+
+// 历史页面设备切换
+function onHistoryDeviceChange() {
+    var sel = document.getElementById('history-device');
+    if (sel && sel.value) {
+        CONFIG.currentDeviceId = sel.value;
+        // 同步全局 UI
+        renderDeviceSidebar();
+        renderDeviceSelector();
+        loadHistoryChart();
+    }
+}
+
 // 加载历史曲线图表
 function loadHistoryChart() {
     var param = document.getElementById('history-param').value;
     var range = document.getElementById('time-range').value;
-    var showThreshold = document.getElementById('show-threshold').checked;
+    var showThreshold = document.getElementById('show-threshold') ?
+        document.getElementById('show-threshold').checked : true;
     var unit = getParamUnit(param);
 
-    var device = getCurrentDevice();
+    // 优先使用页面内的设备选择器，fallback 到全局当前设备
+    var device;
+    var histSel = document.getElementById('history-device');
+    if (histSel && histSel.value) {
+        device = CONFIG.devices[histSel.value];
+    } else {
+        device = getCurrentDevice();
+    }
     if (!device || !device.id) {
         showToast('请先选择设备', 'info');
         return;
+    }
+
+    // 同步全局当前设备
+    if (CONFIG.currentDeviceId !== device.id) {
+        CONFIG.currentDeviceId = device.id;
     }
 
     // 从后端API拉取真实历史数据

@@ -23,7 +23,9 @@ class IoTDARepository(private val api: IoTDAApi = IoTDAApi()) {
         var dev = Device(
             id = id,
             name = info.deviceName ?: id,
-            status = info.status ?: "OFFLINE"
+            status = info.status ?: "OFFLINE",
+            sourceDeviceId = id,
+            lastUpdate = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date())
         )
         for (entry in shadows) {
             val rawProps: Any? = entry.reported?.properties

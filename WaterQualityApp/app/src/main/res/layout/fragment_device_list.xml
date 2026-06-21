@@ -3,18 +3,67 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
-    android:background="#F5F6FA">
+    android:padding="12dp"
+    android:background="#f0f2f5">
 
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="设备列表" android:textSize="20sp" android:textStyle="bold" android:layout_marginBottom="8dp" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="设备管理"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#2c3e50" />
+        <Button
+            android:id="@+id/btn_refresh_devices"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="刷新列表"
+            android:textSize="12sp" />
+    </LinearLayout>
 
-    <Button android:id="@+id/btn_refresh" android:text="刷新设备列表"
-        android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="8dp" />
+    <!-- 表格头部 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#ecf0f1"
+        android:paddingHorizontal="4dp">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1.2" android:text="监测点"
+            android:textSize="10sp" android:textColor="#7f8c8d" android:textStyle="bold" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:text="设备名"
+            android:textSize="10sp" android:textColor="#7f8c8d" android:textStyle="bold" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="0.7" android:text="状态"
+            android:textSize="10sp" android:textColor="#7f8c8d" android:textStyle="bold" android:gravity="center" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1.8" android:text="操作"
+            android:textSize="10sp" android:textColor="#7f8c8d" android:textStyle="bold" android:gravity="center" />
+    </LinearLayout>
 
-    <ListView android:id="@+id/device_list"
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rv_devices"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/txt_device_empty"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:divider="#E0E0E0"
-        android:dividerHeight="1dp" />
+        android:text="暂无设备，请先连接华为云平台"
+        android:textSize="14sp"
+        android:textColor="#999"
+        android:gravity="center"
+        android:visibility="gone" />
 </LinearLayout>

@@ -2,15 +2,19 @@ package com.waterquality.app.ui.home
 
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
+import com.waterquality.app.data.model.Alarm
 import com.waterquality.app.data.model.Device
 import com.waterquality.app.data.model.Thresholds
 import com.waterquality.app.data.remote.ConnectionManager
+import com.waterquality.app.util.LogEntry
 
 class HomeViewModel : ViewModel() {
     val devices: LiveData<List<Device>> = ConnectionManager.devices
     val currentDevice: LiveData<Device?> = ConnectionManager.currentDevice
     val alarmActive: LiveData<Boolean> = ConnectionManager.alarmActive
     val alarmRecords: LiveData<List<String>> = ConnectionManager.alarmRecords
+    val alarmList: LiveData<List<Alarm>> = ConnectionManager.alarmList
+    val logs: LiveData<List<LogEntry>> = ConnectionManager.logs
     val connecting: LiveData<Boolean> = ConnectionManager.connecting
     val connectionError: LiveData<String?> = ConnectionManager.connectionError
     val isConnected get() = ConnectionManager.isConnected
@@ -28,4 +32,5 @@ class HomeViewModel : ViewModel() {
     fun disconnect() = ConnectionManager.disconnect()
     fun triggerAlarm() = ConnectionManager.triggerAlarm()
     fun stopAlarm() = ConnectionManager.stopAlarm()
+    fun fetchAlarms(deviceId: String, limit: Int = 50) = ConnectionManager.fetchAlarms(deviceId, limit)
 }
