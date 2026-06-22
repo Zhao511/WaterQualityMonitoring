@@ -7,17 +7,16 @@
 
 #include "stm32f10x.h"
 
-/* ========== GPS 模块: USART2 重映射 (PD5=TX, PD6=RX) ==========
- * 说明: 之前 GPS 使用 USART1(PA9/PA10)，但板载 USB-UART 也在 PA9/PA10。
- *       现将 GPS 改到 USART2 重映射引脚 PD5/PD6，解放 USART1 给调试输出。
- *       GPS 模块接线: TX→PD6(RX), RX→PD5(TX)
+/* ========== GPS 模块: USART2 默认引脚 (PA2=TX, PA3=RX) ==========
+ * 说明: GPS 使用 USART2 默认引脚 PA2/PA3。
+ *       GPS 模块接线: TX→PA3(RX), RX→PA2(TX)
  */
 #define GPS_USART           USART2
 #define GPS_USART_RCC       RCC_APB1Periph_USART2
-#define GPS_TX_PIN          GPIO_Pin_5
-#define GPS_RX_PIN          GPIO_Pin_6
-#define GPS_TX_PORT         GPIOD
-#define GPS_RX_PORT         GPIOD
+#define GPS_TX_PIN          GPIO_Pin_2
+#define GPS_RX_PIN          GPIO_Pin_3
+#define GPS_TX_PORT         GPIOA
+#define GPS_RX_PORT         GPIOA
 #define GPS_USART_IRQn      USART2_IRQn
 
 #define GPS_BUFFER_SIZE     512

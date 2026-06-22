@@ -50,6 +50,7 @@ typedef struct {
     int8_t      signal;                    /* LoRa RSSI 信号强度 dBm       */
     PowerSource power;                     /* 供电方式: 电池/市电          */
     WorkState   work_state;                /* 当前工作模式                 */
+    bool        alarm_active;              /* 当前告警是否激活 (A0/A1控制) */
     char        last_report[IOT_TIME_STR_LEN]; /* 上一次数据上报时间戳    */
 } DeviceStatus;
 
@@ -96,6 +97,7 @@ typedef struct {
     float  tds;                /* TDS 电导率数值 (mg/L)              */
     float  ph;                 /* pH 酸碱度                          */
     float  temp;               /* 水体温度 (Celsius)                 */
+    float  turbidity;          /* 浊度 (NTU)                         */
     char   rfid[IOT_RFID_LEN]; /* 监测点位编号                       */
     char   gps[IOT_GPS_STR_LEN]; /* 点位地理位置文本 "lon,lat"      */
 
@@ -103,6 +105,7 @@ typedef struct {
     float  ph_min;
     float  ph_max;
     float  tds_max;
+    float  turbidity_max;
     float  temp_min;
     float  temp_max;
 } WaterStatus;
@@ -135,6 +138,7 @@ typedef struct {
 typedef struct {
     float ph_offset;
     float tds_offset;
+    float turbidity_offset;
     float temp_offset;
 } SensorCalibration;
 
@@ -143,6 +147,7 @@ typedef struct {
  * ================================================================ */
 #define IOT_DEFAULT_PH_MIN           6.5f
 #define IOT_DEFAULT_PH_MAX           8.5f
+#define IOT_DEFAULT_TURBIDITY_MAX    50.0f
 #define IOT_DEFAULT_TEMP_MIN         15.0f
 #define IOT_DEFAULT_TEMP_MAX         35.0f
 #define IOT_DEFAULT_TDS_MAX          1000.0f
@@ -159,20 +164,22 @@ typedef struct {
 #define IOT_TEMP_DEFAULT      25.0f       /* 传感器故障时的回退温度 (°C) */
 #define IOT_TEMP_FAULT_SENTINEL 99.0f     /* 传感器故障标记值 (短路) */
 #define IOT_TEMP_FAULT_OPEN   -99.0f      /* 传感器故障标记值 (开路) */
+#define IOT_TURB_VALID_MIN     0.0f
+#define IOT_TURB_VALID_MAX  4000.0f
 #define IOT_PH_DEFAULT         7.0f       /* pH 传感器故障回退值 (中性) */
 
 /* 告警触发额外阈值 */
 #define IOT_BATTERY_LOW_THRESHOLD    10.0f
 #define IOT_SIGNAL_WEAK_THRESHOLD    -100
-#define IOT_RSSI_QUERY_FAILED         -120  /* AT+RSSI? 查询失败时返回 */
 #define IOT_GPS_STALE_SECONDS        600     /* 10 分钟无 GPS 定位触发告警 */
 
 /* ================================================================
  * 上报间隔默认值 (秒)
+ * 原则: STM32 常态保持 RX 模式监听 ESP32 指令, 非必要不切 TX
  * ================================================================ */
-#define IOT_DEFAULT_REPORT_INTERVAL   5      /* Water_status 上报间隔   */
-#define IOT_DEVICE_STATUS_INTERVAL    60     /* DeviceStatus 上报间隔   */
-#define IOT_GPS_REPORT_INTERVAL       30     /* GPS 上报间隔            */
+#define IOT_DEFAULT_REPORT_INTERVAL   60     /* Water_status 上报间隔   */
+#define IOT_DEVICE_STATUS_INTERVAL    120    /* DeviceStatus 上报间隔   */
+#define IOT_GPS_REPORT_INTERVAL       120    /* GPS 上报间隔            */
 
 #ifdef __cplusplus
 }

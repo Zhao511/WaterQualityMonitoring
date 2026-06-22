@@ -1,8 +1,8 @@
 /**
- * GPS 模块驱动 — USART2 重映射 (PD5=TX, PD6=RX)
+ * GPS 模块驱动 — USART2 默认引脚 (PA2=TX, PA3=RX)
  *
- * 注意: 硬件接线上 GPS 模块的 TX 接 STM32 的 PD6(RX)
- *                     GPS 模块的 RX 接 STM32 的 PD5(TX)
+ * 注意: 硬件接线上 GPS 模块的 TX 接 STM32 的 PA3(RX)
+ *                     GPS 模块的 RX 接 STM32 的 PA2(TX)
  */
 
 #include "gps.h"
@@ -24,20 +24,17 @@ void GPS_Init(void)
     USART_InitTypeDef USART_InitStructure;
     NVIC_InitTypeDef  NVIC_InitStructure;
 
-    /* 使能 GPIOD 和 USART2 时钟 + AFIO (重映射需要) */
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOD | RCC_APB2Periph_AFIO, ENABLE);
+    /* 使能 GPIOA 和 USART2 时钟 (USART2 默认引脚 PA2/PA3, 无需重映射) */
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
     RCC_APB1PeriphClockCmd(GPS_USART_RCC, ENABLE);
 
-    /* USART2 重映射到 PD5/PD6 */
-    GPIO_PinRemapConfig(GPIO_Remap_USART2, ENABLE);
-
-    /* TX: PD5 */
+    /* TX: PA2 */
     GPIO_InitStructure.GPIO_Pin   = GPS_TX_PIN;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPS_TX_PORT, &GPIO_InitStructure);
 
-    /* RX: PD6 */
+    /* RX: PA3 */
     GPIO_InitStructure.GPIO_Pin  = GPS_RX_PIN;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
     GPIO_Init(GPS_RX_PORT, &GPIO_InitStructure);

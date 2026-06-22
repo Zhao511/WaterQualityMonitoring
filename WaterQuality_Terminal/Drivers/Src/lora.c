@@ -7,9 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "FreeRTOS.h"
-#include "task.h"
-
 /* 兼容旧 ISR 的线形缓冲区 */
 uint8_t  lora_rx_buffer[LORA_BUFFER_SIZE];
 uint16_t lora_rx_index = 0;
@@ -17,10 +14,13 @@ uint16_t lora_rx_index = 0;
 /* 高效的环形缓冲区 */
 RingBuffer lora_rb;
 
-/* FreeRTOS 任务延时 (替代忙等, 让出 CPU 给低优先级任务) */
+/* 简易延时 (非精确, ~72MHz 下约 1ms 循环 12000 次) */
 static void Lora_DelayMs(volatile uint32_t ms)
 {
-    vTaskDelay(pdMS_TO_TICKS(ms));
+    while (ms--) {
+        volatile uint32_t i = 8000;
+        while (i--) { __NOP(); }
+    }
 }
 
 /* ========== GPIO 控制 ========== */
@@ -342,17 +342,20 @@ void LoRa_SendData(uint8_t *data, uint16_t length)
  */
 uint16_t LoRa_ReceiveData(uint8_t *buffer, uint16_t max_length)
 {
-    /* 将 ISR 线形缓冲区数据转移到环形缓冲 */
-    USART_ITConfig(LORA_USART, USART_IT_RXNE, DISABLE);
+    /* 原子交换: 仅在读取+清零 lora_rx_index 时关中断 (2 条指令)
+     * 数据转移在中断开启状态下进行, 新到达的字节写入复位后的缓冲
+     * 避免长时间禁 ISR 导致 USART DR 溢出 (ORE) 丢数据 */
+    uint16_t count;
+    __disable_irq();
+    count = lora_rx_index;
+    lora_rx_index = 0;
+    __enable_irq();
 
-    uint16_t i;
-    for (i = 0; i < lora_rx_index; i++)
+    /* 将快照数据转移到环形缓冲 (ISR 此时可继续写入) */
+    for (uint16_t i = 0; i < count; i++)
     {
         RingBuffer_Put(&lora_rb, lora_rx_buffer[i]);
     }
-    lora_rx_index = 0;
-
-    USART_ITConfig(LORA_USART, USART_IT_RXNE, ENABLE);
 
     /* 从环形缓冲区读取数据 */
     return RingBuffer_Read(&lora_rb, buffer, max_length);

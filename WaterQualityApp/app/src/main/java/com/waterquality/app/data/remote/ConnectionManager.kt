@@ -234,29 +234,21 @@ object ConnectionManager {
     private fun checkAutoAlarm(device: Device) {
         if (!prefs.isAutoMode) return
 
-        val d = device.data; val th = device.thresholds
-        val triggered = d.temp > th.Temp_threshold || d.ph < th.Ph_min || d.ph > th.Ph_max || d.tds > th.Tds_threshold
+        /* 告警状态由 STM32 终端的 alarm_active 决定, 不在 App 本地判断阈值 */
+        val alarmActive = device.data["alarm_active"]?.let { it as? Boolean } ?: false
 
-        if (triggered) {
-            val details = mutableListOf<String>()
-            if (d.temp > th.Temp_threshold) details.add("水温超限(${d.temp}>${th.Temp_threshold})")
-            if (d.ph < th.Ph_min || d.ph > th.Ph_max) details.add("pH超限(${d.ph})")
-            if (d.tds > th.Tds_threshold) details.add("TDS超限(${d.tds}>${th.Tds_threshold})")
+        if (alarmActive) {
             _alarmActive.postValue(true)
-            _alarmRecords.postValue(details)
-            android.util.Log.d("ALARM", "Auto alarm triggered: $details")
-
             if (!alarmSent) {
                 alarmSent = true
-                scope.launch { repository.sendAlarmCommand(device.id, "alert") }
-                addLog("warning", device.id, "自动告警触发: ${details.joinToString(", ")}")
+                addLog("warning", device.id, "STM32 终端告警中")
             }
         } else {
             if (alarmSent) {
                 alarmSent = false
                 _alarmActive.postValue(false)
                 _alarmRecords.postValue(emptyList())
-                addLog("info", device.id, "告警已自动清除，恢复正常")
+                addLog("info", device.id, "STM32 终端告警已清除，恢复正常")
             }
         }
     }

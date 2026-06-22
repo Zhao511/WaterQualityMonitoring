@@ -2,21 +2,34 @@
 #include "stm32f10x_spi.h"
 #include "stm32f10x_gpio.h"
 #include "stm32f10x_rcc.h"
+#include "usart_debug.h"
 
 /* ========== 内部辅助宏 ========== */
 #define RC522_CS_LOW()   GPIO_ResetBits(RC522_CS_PORT, RC522_CS_PIN)
 #define RC522_CS_HIGH()  GPIO_SetBits(RC522_CS_PORT, RC522_CS_PIN)
 #define RC522_RST_HIGH() GPIO_SetBits(RC522_RST_PORT, RC522_RST_PIN)
 
-/* SPI 收发等待宏 */
-#define SPI_WAIT_TXE()   while (SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_TXE) == RESET)
-#define SPI_WAIT_RXNE()  while (SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_RXNE) == RESET)
+/* SPI 收发等待宏 (带超时保护, 防止 SPI 总线异常时死循环 → WDG 复位)
+ * 正常 SPI @4.5MHz 下 TXE/RXNE 在 ~2μs 内就绪。
+ * 2000 次循环 ≈ 140μs 超时，足够安全裕度且不会触发 WDG。 */
+#define SPI_WAIT_TXE()   do { \
+    uint32_t _spi_to = 2000; \
+    while (SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_TXE) == RESET && --_spi_to > 0); \
+} while(0)
+#define SPI_WAIT_RXNE()  do { \
+    uint32_t _spi_to = 2000; \
+    while (SPI_I2S_GetFlagStatus(SPI2, SPI_I2S_FLAG_RXNE) == RESET && --_spi_to > 0); \
+} while(0)
 
 /* ========== 初始化 ========== */
 void RC522_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
     SPI_InitTypeDef  SPI_InitStructure;
+
+    /* 释放 JTAG 占用的 PB4(JNTRST), 保留 SWD(PA13/PA14) 用于调试 */
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+    GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE);
 
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI2, ENABLE);
@@ -58,13 +71,25 @@ void RC522_Init(void)
     RC522_WriteRegister(RC522_REG_TX_ASK,      RC522_TX_ASK_VAL);
     RC522_WriteRegister(RC522_REG_MODE,        RC522_MODE_VAL);
     RC522_AntennaOn();
+
+    /* 诊断: 读 VersionReg (0x37), MFRC522 应为 0x92 */
+    {
+        uint8_t ver = RC522_ReadRegister(0x37);
+        Debug_Printf("[RC522] VersionReg=0x%02X (expected 0x92)\r\n", ver);
+    }
 }
 
 /* ========== 寄存器读写 ========== */
 
 void RC522_Reset(void)
 {
+    uint32_t to;
+
     RC522_WriteRegister(RC522_REG_COMMAND, 0x0F);
+
+    /* 等待软复位完成: CommandReg 从 0x20 变为 0x00, ~50μs */
+    to = 10000;
+    while (RC522_ReadRegister(RC522_REG_COMMAND) != 0x00 && --to > 0);
 }
 
 void RC522_WriteRegister(uint8_t addr, uint8_t value)
@@ -148,7 +173,8 @@ uint8_t RC522_Request(uint8_t reqMode, uint8_t *TagType)
 
     status = RC522_ToCard(PCD_TRANSCEIVE, TagType, 1, TagType, &backBits);
 
-    if ((status != MI_OK) || (backBits != 0x10))
+    /* MI_NOTAGERR(1) = 无卡, 是正常状态, 不要转成 MI_ERR */
+    if (status == MI_OK && backBits != 0x10)
     {
         status = MI_ERR;
     }
@@ -260,12 +286,16 @@ uint8_t RC522_SelectTag(uint8_t *serNum)
 
     status = RC522_ToCard(PCD_TRANSCEIVE, serNum, 2, serNum, &backLen);
 
-    if ((status == MI_OK) && (backLen == 0x18))
+    /* MIFARE Classic 1K (4B UID) → 应答 5 字节=40bit=0x28 */
+    if ((status == MI_OK) && (backLen == 0x28))
     {
+        /* serNum[0..3]=UID, serNum[4]=BCC, 无需移位 */
+    }
+    else if ((status == MI_OK) && (backLen == 0x18))
+    {
+        /* 3 字节应答 (兼容旧格式): 跳过第 1 字节 */
         for (i = 0; i < 5; i++)
-        {
             serNum[i] = serNum[i + 1];
-        }
     }
     else
     {

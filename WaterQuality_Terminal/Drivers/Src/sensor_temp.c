@@ -1,6 +1,5 @@
 #include "sensor_temp.h"
 #include "adc_common.h"
-#include "iot_model.h"
 #include <math.h>
 
 /**
@@ -22,7 +21,7 @@ float Temp_Sensor_Read(void)
 
     if (ADC_ReadChannel(ADC_CH_TEMP, &adc_value) != ADC_READ_OK)
     {
-        return IOT_TEMP_DEFAULT; /* 超时返回常温 */
+        return 25.0f; /* 超时返回常温 */
     }
     return Temp_Sensor_Calculate(adc_value);
 }

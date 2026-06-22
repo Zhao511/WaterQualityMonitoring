@@ -8,7 +8,7 @@ var CONFIG = {
     sk: '',
     projectId: '',
     productId: '',
-    endpoint: '',
+    endpoint: '',  /* 从华为云控制台获取 */
     region: 'cn-south-1',
 
     // 当前选中的设备ID

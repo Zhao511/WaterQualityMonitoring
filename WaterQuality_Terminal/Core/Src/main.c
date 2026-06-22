@@ -28,6 +28,7 @@
 /* 驱动层 */
 #include "led_rgb.h"
 #include "sensor_ph.h"
+#include "sensor_turbidity.h"
 #include "sensor_temp.h"
 #include "sensor_tds.h"
 #include "adc_common.h"
@@ -65,6 +66,7 @@ uint32_t     g_report_interval_sec = IOT_DEFAULT_REPORT_INTERVAL;
  * ================================================================ */
 typedef struct {
     float ph;
+    float turbidity;
     float temperature;
     float tds;
 } SensorData;
@@ -103,8 +105,7 @@ TaskHandle_t xIOTTaskHandle = NULL;
 /* ================================================================
  * 函数声明
  * ================================================================ */
-static LED_Color CheckWaterQuality_LED(const WaterStatus *ws);
-static uint8_t  ReadRFIDTag(uint8_t *tag_id);
+static uint8_t  ReadRFIDTag(uint8_t *tag_id, uint8_t *out_status);
 
 /* 任务函数 */
 static void vSensorTask(void *pvParameters);
@@ -123,30 +124,15 @@ extern void IOT_Process_Incoming(void);
 extern void IOT_Collect_All_Sensors(WaterStatus *ws);
 
 /* ================================================================
- * LED 颜色判定 (基于物模型阈值)
- * ================================================================ */
-static LED_Color CheckWaterQuality_LED(const WaterStatus *ws)
-{
-    uint8_t fail_count = 0;
-
-    if (ws->ph   < ws->ph_min   || ws->ph   > ws->ph_max)   fail_count++;
-    if (ws->tds  > ws->tds_max)                              fail_count++;
-    if (ws->temp < ws->temp_min || ws->temp > ws->temp_max)  fail_count++;
-
-    if (fail_count == 0)      return LED_COLOR_GREEN;
-    else if (fail_count == 1) return LED_COLOR_YELLOW;
-    else                      return LED_COLOR_RED;
-}
-
-/* ================================================================
  * RFID 读卡辅助
  * ================================================================ */
-static uint8_t ReadRFIDTag(uint8_t *tag_id)
+static uint8_t ReadRFIDTag(uint8_t *tag_id, uint8_t *out_status)
 {
     uint8_t status;
     uint8_t tag_type[2];
 
     status = RC522_Request(PICC_REQA, tag_type);
+    if (out_status) *out_status = status;
     if (status != MI_OK) return 0;
 
     status = RC522_SelectTag(tag_id);
@@ -154,12 +140,12 @@ static uint8_t ReadRFIDTag(uint8_t *tag_id)
 }
 
 /* ================================================================
- * 任务 1 — 传感器采集 (Prio 3, 1s 周期)
+ * 任务 1 — 传感器采集 (Prio 3, 5s 周期, 常态 RX 不频繁切换)
  * ================================================================ */
 static void vSensorTask(void *pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xPeriod = pdMS_TO_TICKS(1000);
+    const TickType_t xPeriod = pdMS_TO_TICKS(5000);  /* 5s 采集, 常态 RX */
 
     SensorData sensor_data;
 
@@ -175,6 +161,15 @@ static void vSensorTask(void *pvParameters)
 
         raw_ph = IOT_Apply_Calibration("ph", PH_Sensor_Read());
         IOT_Validate_SensorData("ph", raw_ph, &sensor_data.ph);
+
+#if TURBIDITY_SENSOR_ENABLED
+        {
+            float raw_turb = IOT_Apply_Calibration("turbidity", Turbidity_Sensor_Read());
+            IOT_Validate_SensorData("turbidity", raw_turb, &sensor_data.turbidity);
+        }
+#else
+        sensor_data.turbidity   = 0;  /* 无浊度传感器, 固定为 0 */
+#endif
 
         raw_temp = IOT_Apply_Calibration("temp", Temp_Sensor_Read());
         IOT_Validate_SensorData("temp", raw_temp, &sensor_data.temperature);
@@ -193,15 +188,14 @@ static void vSensorTask(void *pvParameters)
             g_water_status.ph        = sensor_data.ph;
             g_water_status.tds       = sensor_data.tds;
             g_water_status.temp      = sensor_data.temperature;
+            g_water_status.turbidity = sensor_data.turbidity;
             xSemaphoreGive(xWaterMutex);
         }
 
         /* 写入传感器队列 (供 IOT 任务消费) */
         xQueueOverwrite(xSensorQueue, &sensor_data);
 
-        /* 水质评估 → LED */
-        LED_Color color = CheckWaterQuality_LED(&g_water_status);
-        xQueueOverwrite(xLEDQueue, &color);
+        /* 水质评估 → LED (已移除: LED 由平台 A0/A1 告警命令控制) */
 
         /* 告警检测 (基于物模型阈值) */
         Alarm alarm;
@@ -210,12 +204,23 @@ static void vSensorTask(void *pvParameters)
             xQueueSend(xAlarmQueue, &alarm, 0);  /* 非阻塞送告警 */
         }
 
-        /* 调试输出 */
+        /* 调试输出 (含阈值, 便于判断 LED 颜色原因) */
         if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
         {
-            Debug_Printf("PH:%.2f TDS:%.1f Temp:%.1f\r\n",
-                         sensor_data.ph, sensor_data.tds,
-                         sensor_data.temperature);
+            Debug_Printf("PH:%.2f[%.1f-%.1f] TDS:%.1f[<%.0f] Temp:%.1f[%.0f-%.0f] Turb:%.1f\r\n",
+                         sensor_data.ph, g_water_status.ph_min, g_water_status.ph_max,
+                         sensor_data.tds, g_water_status.tds_max,
+                         sensor_data.temperature, g_water_status.temp_min, g_water_status.temp_max,
+                         sensor_data.turbidity);
+            /* LED 判定细节 */
+            uint8_t fc = 0;
+            if (sensor_data.ph < g_water_status.ph_min || sensor_data.ph > g_water_status.ph_max) fc++;
+            if (sensor_data.tds > g_water_status.tds_max) fc++;
+            if (sensor_data.temperature < g_water_status.temp_min || sensor_data.temperature > g_water_status.temp_max) fc++;
+            Debug_Printf("[Sensor] fail_count=%u -> LED=%s | cycle=%lu\r\n",
+                         fc,
+                         fc == 0 ? "GREEN" : (fc == 1 ? "YELLOW" : "RED"),
+                         (unsigned long)g_sensor_cycle);
             xSemaphoreGive(xDebugMutex);
         }
 
@@ -225,9 +230,9 @@ static void vSensorTask(void *pvParameters)
 
         if ((g_sensor_cycle % 10) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[Sensor] cycle=%lu | PH=%.2f TDS=%.1f Temp=%.1f\r\n",
+                Debug_Printf("[Sensor] cycle=%lu | PH=%.2f TDS=%.1f Temp=%.1f Turb=%.1f\r\n",
                              g_sensor_cycle, sensor_data.ph, sensor_data.tds,
-                             sensor_data.temperature);
+                             sensor_data.temperature, sensor_data.turbidity);
                 xSemaphoreGive(xDebugMutex);
             }
         }
@@ -237,16 +242,18 @@ static void vSensorTask(void *pvParameters)
          *   - 放在 WDG_Heartbeat 之后: 故障前心跳已上报
          *   - 使用 xDebugMutex 保护 Debug_Printf */
         if ((g_sensor_cycle % 10) == 0) {
-            uint16_t r_ph, r_tds, r_temp;
-            uint8_t  ok_ph, ok_tds, ok_temp;
+            uint16_t r_ph, r_tds, r_turb, r_temp;
+            uint8_t  ok_ph, ok_tds, ok_turb, ok_temp;
             ok_ph   = ADC_ReadChannel(ADC_CH_PH,        &r_ph);
             ok_tds  = ADC_ReadChannel(ADC_CH_TDS,       &r_tds);
+            ok_turb = ADC_ReadChannel(ADC_CH_TURBIDITY, &r_turb);
             ok_temp = ADC_ReadChannel(ADC_CH_TEMP,      &r_temp);
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[RAW ADC] cycle=%lu | pH=%s%u TDS=%s%u Temp=%s%u\r\n",
+                Debug_Printf("[RAW ADC] cycle=%lu | pH=%s%u TDS=%s%u Turb=%s%u Temp=%s%u\r\n",
                              g_sensor_cycle,
                              (ok_ph   == ADC_READ_OK) ? "" : "TMO:", r_ph,
                              (ok_tds  == ADC_READ_OK) ? "" : "TMO:", r_tds,
+                             (ok_turb == ADC_READ_OK) ? "" : "TMO:", r_turb,
                              (ok_temp == ADC_READ_OK) ? "" : "TMO:", r_temp);
                 xSemaphoreGive(xDebugMutex);
             }
@@ -258,7 +265,7 @@ static void vSensorTask(void *pvParameters)
 }
 
 /* ================================================================
- * 任务 2 — GPS 解析 (Prio 2, 200ms 周期)
+ * 任务 2 — GPS 解析 (Prio 2, 1s 周期)
  * ================================================================ */
 static void vGPSTask(void *pvParameters)
 {
@@ -288,8 +295,8 @@ static void vGPSTask(void *pvParameters)
                 xSemaphoreGive(xDebugMutex);
             }
 
-            /* 电子围栏检查 (每 25 轮 ≈ 5s 检查一次, 避免频繁告警) */
-            if ((g_gps_cycle % 25) == 0) {
+            /* 电子围栏检查 (每 10 轮 ≈ 10s 检查一次, 避免频繁告警) */
+            if ((g_gps_cycle % 10) == 0) {
                 if (IOT_GeoFence_Check(g_gps_data.latitude, g_gps_data.longitude) != 0) {
                     Alarm fence_alarm;
                     memset(&fence_alarm, 0, sizeof(fence_alarm));
@@ -308,11 +315,11 @@ static void vGPSTask(void *pvParameters)
             }
         }
 
-        /* 心跳 + 周期日志 (每 25 轮 ≈ 5s 输出摘要) */
+        /* 心跳 + 周期日志 (每 10 轮 ≈ 10s 输出摘要) */
         g_gps_cycle++;
         WDG_Heartbeat(HEARTBEAT_GPS);
 
-        if ((g_gps_cycle % 25) == 0) {
+        if ((g_gps_cycle % 10) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
                 Debug_Printf("[GPS] cycle=%lu | Fix=%d Sat=%d\r\n",
                              g_gps_cycle, raw_gps.fix, raw_gps.satellites);
@@ -320,23 +327,24 @@ static void vGPSTask(void *pvParameters)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(200));
+        vTaskDelay(pdMS_TO_TICKS(1000));  /* 1s GPS 轮询, 常态 RX */
     }
 }
 
 /* ================================================================
- * 任务 3 — RFID 扫描 (Prio 1, 500ms 周期)
+ * 任务 3 — RFID 扫描 (Prio 1, 2s 周期)
  * ================================================================ */
 static void vRFIDTask(void *pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xPeriod = pdMS_TO_TICKS(500);
+    const TickType_t xPeriod = pdMS_TO_TICKS(2000);  /* 2s RFID, 降低总线占用 */
 
     RFIDData rfid = {0};
+    uint8_t  last_status = 0xFF;  /* 最近一次 RC522_Request 状态 */
 
     for (;;)
     {
-        rfid.tag_valid = ReadRFIDTag(rfid.tag_id);
+        rfid.tag_valid = ReadRFIDTag(rfid.tag_id, &last_status);
 
         if (rfid.tag_valid)
         {
@@ -362,7 +370,8 @@ static void vRFIDTask(void *pvParameters)
 
         if ((g_rfid_cycle % 10) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[RFID] cycle=%lu | scanning...\r\n", g_rfid_cycle);
+                Debug_Printf("[RFID] cycle=%lu | stat=%d (0=OK 1=NOTAG 2=ERR)\r\n",
+                             g_rfid_cycle, last_status);
                 xSemaphoreGive(xDebugMutex);
             }
         }
@@ -391,11 +400,25 @@ static void vIOTTask(void *pvParameters)
     /* tick_count 为秒计数器, 直接与秒值比较 */
     tick_count = 1;  /* 从 1 开始, 避免首发空数据 */
 
+    /* 启动延迟: 等 ESP32 完成 WiFi+NTP+MQTT 初始化 (~15s)
+     * 分段 delay + 喂狗, 避免触发 WDG 复位 */
+    Debug_Printf("[IoT] Waiting 15s for ESP32 gateway init...\r\n");
+    for (int i = 0; i < 15; i++) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        WDG_Heartbeat(HEARTBEAT_IOT);
+    }
+    Debug_Printf("[IoT] Start reporting\r\n");
+
     for (;;)
     {
-        /* 诊断: 每 10 轮输出一次, 减少串口开销避免饿死低优先级任务 */
-        if ((tick_count % 10) == 0) {
-            Debug_Printf("[IoT] alive tick=%lu\r\n", tick_count);
+        /* 诊断: 每次循环无条件输出, 用于定位任务是否在运行 */
+        {
+            static uint32_t last_tick_time = 0;
+            uint32_t now_tick = xTaskGetTickCount();
+            uint32_t elapsed = (last_tick_time > 0) ? (now_tick - last_tick_time) : 0;
+            Debug_Printf("[IoT] alive tick=%lu (elapsed=%lums)\r\n",
+                         tick_count, (unsigned long)(elapsed * portTICK_PERIOD_MS));
+            last_tick_time = now_tick;
         }
 
         /* --- LoRa 下行命令处理 (每次循环都检查) --- */
@@ -474,11 +497,54 @@ static void vIOTTask(void *pvParameters)
             last_gps_report = tick_count;
         }
 
-        /* --- Alarm 即时上报 (检查队列) --- */
-        while (xQueueReceive(xAlarmQueue, &alarm, 0) == pdPASS)
+        /* --- Alarm 上报 (限流: 最短间隔内同类型+相近值只发一次) --- */
         {
-            IOT_Report_Alarm(&alarm);
+            static Alarm     last_sent;
+            static uint32_t  last_sent_tick = 0;
+            static bool      has_last = false;
+            #define ALARM_MIN_INTERVAL_SEC  10    /* 同类告警最小间隔 */
+
+            /* 只取队列最新一条, 中间积压的丢弃 */
+            Alarm latest;
+            bool  has_alarm = false;
+            while (xQueueReceive(xAlarmQueue, &alarm, 0) == pdPASS)
+            {
+                latest = alarm;
+                has_alarm = true;
+            }
+
+            if (has_alarm)
+            {
+                /* 去重: 同类型 + 值变化<0.5 且间隔<10s → 跳过 */
+                bool same_type = has_last &&
+                    (latest.alarm_type == last_sent.alarm_type);
+                float val_diff = (latest.current_value > last_sent.current_value)
+                    ? (latest.current_value - last_sent.current_value)
+                    : (last_sent.current_value - latest.current_value);
+                uint32_t elapsed = tick_count - last_sent_tick;
+
+                if (!has_last ||
+                    !same_type ||
+                    val_diff >= 0.5f ||
+                    elapsed >= ALARM_MIN_INTERVAL_SEC)
+                {
+                    IOT_Report_Alarm(&latest);
+                    last_sent      = latest;
+                    last_sent_tick = tick_count;
+                    has_last       = true;
+                }
+                /* 调试: 去重跳过时打印原因 */
+                else if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                {
+                    Debug_Printf("[IoT] Alarm %s suppressed (same type, diff=%.2f, %lus ago)\r\n",
+                                 latest.alarm_id, val_diff, elapsed);
+                    xSemaphoreGive(xDebugMutex);
+                }
+            }
         }
+
+        /* ---- 上报后立即检查 RX (防止 TX 期间到达的数据积压) ---- */
+        IOT_Process_Incoming();
 
         /* 心跳 + 周期日志 (每 5 轮 ≈ 5s 输出摘要) */
         g_iot_cycle++;
@@ -502,31 +568,31 @@ static void vIOTTask(void *pvParameters)
  * ================================================================ */
 static void vLEDTask(void *pvParameters)
 {
-    LED_Color color;
-    LED_Color last_color = LED_COLOR_OFF;
-    static const char *color_names[] = {
-        "OFF", "RED", "GREEN", "BLUE",
-        "YELLOW", "CYAN", "MAGENTA", "WHITE"
-    };
+    LED_Color last_color = LED_COLOR_GREEN;  /* 初始为绿灯 */
+
+    /* 确保初始 LED 状态正确 */
+    LED_RGB_SetColor(LED_COLOR_GREEN);
 
     for (;;)
     {
-        if (xQueueReceive(xLEDQueue, &color, portMAX_DELAY) == pdPASS)
-        {
-            LED_RGB_SetColor(color);
-            g_led_cycle++;
-            WDG_Heartbeat(HEARTBEAT_LED);
+        /* LED 由平台告警命令 (A0/A1) 控制, 此处周期同步确保一致性 */
+        LED_Color color = g_device_status.alarm_active ? LED_COLOR_RED : LED_COLOR_GREEN;
 
-            /* LED 颜色变化时输出日志 */
-            if (color != last_color) {
-                if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                    Debug_Printf("[LED] -> %s (cycle=%lu)\r\n",
-                                 color_names[color], g_led_cycle);
-                    xSemaphoreGive(xDebugMutex);
-                }
-                last_color = color;
+        if (color != last_color) {
+            LED_RGB_SetColor(color);
+            if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
+                Debug_Printf("[LED] -> %s (alarm_active=%s)\r\n",
+                             g_device_status.alarm_active ? "RED" : "GREEN",
+                             g_device_status.alarm_active ? "true" : "false");
+                xSemaphoreGive(xDebugMutex);
             }
+            last_color = color;
         }
+
+        g_led_cycle++;
+        WDG_Heartbeat(HEARTBEAT_LED);
+
+        vTaskDelay(pdMS_TO_TICKS(2000));  /* 2s 周期同步 */
     }
 }
 
@@ -619,7 +685,22 @@ int main(void)
         }
     }
 
-    Debug_Printf("\r\n[BOOT] System starting... SYSCLK=%lu Hz\r\n", SystemCoreClock);
+    Debug_Printf("\r\n");
+    Debug_Printf("========================================\r\n");
+    Debug_Printf("[BOOT] System starting... SYSCLK=%lu Hz\r\n", SystemCoreClock);
+    {
+        /* 复位检测: 打印 RCC 复位标志, 定位是上电复位还是看门狗复位 */
+        uint32_t csr = RCC->CSR;
+        Debug_Printf("[BOOT] RCC_CSR=0x%08lX", (unsigned long)csr);
+        if (csr & 0x01000000) Debug_Printf(" LPWR");    /* 低功耗复位 */
+        if (csr & 0x04000000) Debug_Printf(" WDG");      /* 窗口/独立看门狗复位 */
+        if (csr & 0x08000000) Debug_Printf(" SW");       /* 软件复位 */
+        if (csr & 0x10000000) Debug_Printf(" POR");      /* 上电复位 */
+        if (csr & 0x20000000) Debug_Printf(" PIN");      /* 引脚复位 */
+        Debug_Printf("\r\n");
+        RCC->CSR |= 0x01000000;  /* 清除所有复位标志 */
+    }
+    Debug_Printf("========================================\r\n\r\n");
 
     /* LED 闪 3 次: 第一条 Debug_Printf 完成 */
     {
@@ -643,6 +724,10 @@ int main(void)
     PH_Sensor_Init();
     Debug_Printf("[INIT] PH_Sensor OK\r\n");
 
+    Debug_Printf("[INIT] Turbidity_Sensor...\r\n");
+    Turbidity_Sensor_Init();
+    Debug_Printf("[INIT] Turbidity_Sensor OK\r\n");
+
     Debug_Printf("[INIT] Temp_Sensor...\r\n");
     Temp_Sensor_Init();
     Debug_Printf("[INIT] Temp_Sensor OK\r\n");
@@ -664,8 +749,8 @@ int main(void)
     RC522_Init();
     Debug_Printf("[INIT] RC522 OK\r\n");
 
-    /* 启动指示：蓝灯 */
-    LED_RGB_SetColor(LED_COLOR_BLUE);
+    /* 启动指示：绿灯 (alarm_active=false) — LED 由平台告警命令控制 */
+    LED_RGB_SetColor(LED_COLOR_GREEN);
     Debug_Printf("\r\n========================================\r\n");
     Debug_Printf(" Water Quality Monitor - FreeRTOS v2.0\r\n");
     Debug_Printf(" STM32F103C8T6 | 72MHz | IoT 4-Service\r\n");

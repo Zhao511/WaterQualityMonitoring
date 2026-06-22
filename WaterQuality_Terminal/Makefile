@@ -31,6 +31,7 @@ SRCS += Core/Src/stm32f10x_it.c
 SRCS += Core/Src/system_stm32f10x.c
 SRCS += Drivers/Src/sensor_ph.c
 SRCS += Drivers/Src/sensor_tds.c
+SRCS += Drivers/Src/sensor_turbidity.c
 SRCS += Drivers/Src/sensor_temp.c
 SRCS += Drivers/Src/adc_common.c
 SRCS += Drivers/Src/rc522.c

@@ -39,7 +39,7 @@ static const char * const hb_names[HEARTBEAT_COUNT] = {
  * 各任务描述信息 (用于启动时打印表格)
  * ================================================================ */
 static const char * const hb_periods[HEARTBEAT_COUNT] = {
-    "1000ms", " 200ms", "1000ms", " 500ms", " event"
+    "5000ms", "1000ms", "1000ms", "2000ms", " event"
 };
 
 static const uint32_t hb_stack_words[HEARTBEAT_COUNT] = {

@@ -68,12 +68,15 @@
 #define MI_NOTAGERR               1
 #define MI_ERR                    2
 
-/* ========== 中断标志掩码 ========== */
-#define IRQ_LO_ALERT              0x01
-#define IRQ_IDLE                  0x04
-#define IRQ_RX                    0x20
-#define IRQ_TX                    0x10
-#define IRQ_TIMER                 0x01
+/* ========== 中断标志掩码 (ComIrqReg 0x04) ========== */
+#define IRQ_TIMER                 0x01  /* Bit0: 定时器归零 */
+#define IRQ_ERR                   0x02  /* Bit1: 通信错误 */
+#define IRQ_LO_ALERT              0x04  /* Bit2: FIFO 低水位 */
+#define IRQ_HI_ALERT              0x08  /* Bit3: FIFO 高水位 */
+#define IRQ_IDLE                  0x10  /* Bit4: 命令执行完成 */
+#define IRQ_RX                    0x20  /* Bit5: 接收完成 */
+#define IRQ_TX                    0x40  /* Bit6: 发送完成 */
+#define IRQ_SET1                  0x80  /* Bit7: TimerVal 到达 */
 
 /* ========== API ========== */
 void     RC522_Init(void);

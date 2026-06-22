@@ -29,7 +29,7 @@
  * 华北-北京: iot-mqtts.cn-north-1.myhuaweicloud.com
  * 华东-上海: iot-mqtts.cn-east-3.myhuaweicloud.com
  */
-#define HUAWEI_MQTT_HOST    "YOUR_IOTDA_MQTT_HOST"
+#define HUAWEI_MQTT_HOST    "YOUR_MQTT_HOST"  /* e.g. xxx.st1.iotda-device.cn-south-1.myhuaweicloud.com */
 #define HUAWEI_MQTT_PORT    8883         /* TLS: 8883 */
 
 /* MQTT 心跳 */
@@ -50,7 +50,7 @@
 #define LORA_M0_PIN         LORA_MD0_PIN
 
 /* LoRa 缓冲区 */
-#define LORA_RX_BUF_SIZE    512
+#define LORA_RX_BUF_SIZE    2048
 #define LORA_TX_BUF_SIZE    512
 
 /* ================================================================

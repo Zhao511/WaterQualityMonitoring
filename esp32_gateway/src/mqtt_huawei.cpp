@@ -207,6 +207,7 @@ static bool mqtt_connect()
     /* MQTT 连接参数 */
     g_mqtt.setServer(HUAWEI_MQTT_HOST, HUAWEI_MQTT_PORT);
     g_mqtt.setKeepAlive(MQTT_KEEPALIVE_SEC);
+    g_mqtt.setBufferSize(1024);  /* 默认256装不下227B告警+topic头 */
 
     DEBUG_SERIAL.print("[MQTT] Connecting to ");
     DEBUG_SERIAL.print(HUAWEI_MQTT_HOST);
@@ -346,7 +347,9 @@ void mqtt_report_property(const String &service_json)
     DEBUG_SERIAL.print("  ");
     DEBUG_SERIAL.println(wrapped);
 
-    g_mqtt.publish(g_topic_property.c_str(), wrapped.c_str());
+    if (!g_mqtt.publish(g_topic_property.c_str(), wrapped.c_str())) {
+        DEBUG_SERIAL.println("[MQTT] PUBLISH FAILED! Packet too large?");
+    }
 }
 
 /* ================================================================

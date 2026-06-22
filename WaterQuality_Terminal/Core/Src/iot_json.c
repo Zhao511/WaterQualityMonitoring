@@ -75,6 +75,7 @@ int iot_json_serialize_device_status(const DeviceStatus *s,
         "\"signal\":%d,"
         "\"power\":\"%s\","
         "\"work_state\":\"%s\","
+        "\"alarm_active\":%s,"
         "\"last_report\":\"%s\""
         "}}",
         s->online ? "true" : "false",
@@ -82,6 +83,7 @@ int iot_json_serialize_device_status(const DeviceStatus *s,
         s->signal,
         power_source_str(s->power),
         work_state_str(s->work_state),
+        s->alarm_active ? "true" : "false",
         s->last_report);
 
     return (int)(p - buf);
@@ -122,11 +124,11 @@ int iot_json_serialize_alarm(const Alarm *a,
     char *p = buf;
     int remain = max_len;
 
+    /* 去掉 device_id (MQTT topic 已知), 缩减 ~24 字节以适配 LoRa SF7 222B 上限 */
     SAFE_SNPRINTF(p, remain,
         "{\"service_id\":\"Alarm\",\"properties\":{"
         "\"alarm_id\":\"%s\","
         "\"alarm_type\":\"%s\","
-        "\"device_id\":\"%s\","
         "\"rfid\":\"%s\","
         "\"current_value\":%.2f,"
         "\"threshold\":%.2f,"
@@ -136,7 +138,6 @@ int iot_json_serialize_alarm(const Alarm *a,
         "}}",
         a->alarm_id,
         alarm_type_str(a->alarm_type),
-        a->device_id,
         a->rfid,
         a->current_value,
         a->threshold,

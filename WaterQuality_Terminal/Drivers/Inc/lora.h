@@ -30,14 +30,14 @@
 #define LORA_BAUD_RATE         115200  /* ATK-LORA-01 出厂默认, 模块固定 */
 #define LORA_DEFAULT_ADDRESS   0
 #define LORA_DEFAULT_CHANNEL   0      /* 433MHz (ATK-LORA-01 默认) */
-#define LORA_DEFAULT_RATE      2      /* 2.4kbps (ATK-LORA-01 默认) */
+#define LORA_DEFAULT_RATE      5      /* 19.2kbps (原2.4kbps单帧仅~55B,装不下200B JSON) */
 
 /* AUX 超时 (ms) — 等待模块就绪的最长时间 */
 #define LORA_AUX_TIMEOUT_MS    500
 
 /* ========== 缓冲区 ========== */
-#define LORA_BUFFER_SIZE  256
-#define LORA_DATA_SIZE    256   /* 与 LORA_BUFFER_SIZE 一致, 容纳 200+ 字节 JSON */
+#define LORA_BUFFER_SIZE  240   /* 帧协议: max 203B帧 + 余量 */
+#define LORA_DATA_SIZE    240   /* 与 LORA_BUFFER_SIZE 一致 */
 
 /* ========== 环形缓冲区结构 ========== */
 typedef struct {

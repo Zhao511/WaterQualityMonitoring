@@ -67,9 +67,13 @@ static void on_lora_receive(const String &svc, const String &json)
          * → 遍历所有字段转发到华为云 IoTDA 命令响应格式 */
         String cmd_name = svc.substring(9);  /* 去掉 "response:" 前缀 */
 
-        /* 内部链路探测 ping/pong 不上报云平台 */
+        /* 内部链路探测 ping/pong 和 A0/A1 告警确认不上报云平台 */
         if (cmd_name == "ping") {
             DEBUG_SERIAL.println("[FWD] LoRa ping pong (internal), skip cloud");
+            return;
+        }
+        if (cmd_name == "alarm") {
+            DEBUG_SERIAL.println("[FWD] LoRa alarm ack (internal), skip cloud");
             return;
         }
 
@@ -132,7 +136,32 @@ static void on_cloud_command(const String &cmd_json)
     const char *svc = doc["service_id"] | "";
     const char *cmd = doc["command_name"] | "";
 
-    /* 构造转发给 STM32 的精简命令 JSON */
+    /* ---- 极简告警控制: set_alarm_mode → A0/A1 ----
+     * 自动/手动模式判断由 Web/App 负责, ESP32 仅翻译
+     * "alert"/"auto" → A0 (开启告警)
+     * "normal"/"manual" → A1 (关闭告警) */
+    if (strcmp(svc, "Alarm") == 0 && strcmp(cmd, "set_alarm_mode") == 0)
+    {
+        const char *mode = doc["paras"]["mode"] | "";
+        bool disable = (strcmp(mode, "normal") == 0 || strcmp(mode, "manual") == 0);
+
+        DEBUG_SERIAL.printf("[FWD] set_alarm_mode mode=%s -> %s\n",
+                            mode, disable ? "A1 (disable)" : "A0 (enable)");
+
+        /* 帧协议发送 + 停等 ACK */
+        bool acked = lora_send_framed(disable ? "A1" : "A0");
+
+        /* 云端回复: ACK 确认后才返回成功 */
+        StaticJsonDocument<256> rsp;
+        rsp["result_code"] = acked ? 0 : 1;
+        rsp["response_name"] = cmd;
+        String rsp_json;
+        serializeJson(rsp, rsp_json);
+        mqtt_response_cmd(rsp_json);
+        return;
+    }
+
+    /* 构造转发给 STM32 的精简命令 JSON (其他命令保持不变) */
     StaticJsonDocument<512> fwd;
     fwd["cmd"]  = cmd;
     fwd["svc"]  = svc;
@@ -146,7 +175,7 @@ static void on_cloud_command(const String &cmd_json)
     String fwd_json;
     serializeJson(fwd, fwd_json);
 
-    lora_send(fwd_json);
+    lora_send_framed(fwd_json);
 }
 
 /* ================================================================
@@ -190,7 +219,7 @@ static void lora_ping_check()
     if (lora_frames_count() == frames_last)
     {
         DEBUG_SERIAL.println("[PING] Sending LoRa ping to STM32...");
-        lora_send("{\"ping\":1}");
+        lora_send_framed("{\"ping\":1}");
     }
     frames_last = lora_frames_count();
 }

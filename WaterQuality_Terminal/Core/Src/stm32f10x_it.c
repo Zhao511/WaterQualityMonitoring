@@ -22,6 +22,9 @@ extern uint16_t lora_rx_index;
 extern uint8_t  debug_rx_buffer[];
 extern uint16_t debug_rx_index;
 
+/* LoRa RX 诊断计数器: ISR 每次收到字节递增, IoT 任务周期性读取并清零 */
+volatile uint32_t g_lora_isr_byte_count = 0;
+
 /* ================================================================
  *  故障现场快照 —— 发生 HardFault/BusFault/MemManage 时自动保存
  *  调试方法: Keil 暂停后在 Watch 窗口输入 fault_snapshot 查看全部字段
@@ -43,10 +46,13 @@ FaultSnapshot fault_snapshot;
 static void UART_RX_ISR(USART_TypeDef *USARTx, uint8_t *buf,
                          uint16_t *idx, uint16_t buf_size)
 {
-    /* 溢出错误处理: 读 SR(已由if完成)→读 DR 即可清除 ORE */
+    /* ORE 溢出处理: DR 中仍保留上一个未被读取的有效字节
+     * 必须保存而非丢弃, 否则导致数据丢失 (如 LoRa A0/A1 指令) */
     if (USARTx->SR & (uint32_t)0x00000008)           /* ORE = bit3 */
     {
-        (void)USARTx->DR;                            /* 读 DR 清 ORE */
+        uint8_t saved = (uint8_t)USARTx->DR;          /* 读 DR 保存有效字节 */
+        if (*idx < buf_size)
+            buf[(*idx)++] = saved;
     }
 
     if (USART_GetITStatus(USARTx, USART_IT_RXNE) != RESET)
@@ -56,8 +62,7 @@ static void UART_RX_ISR(USART_TypeDef *USARTx, uint8_t *buf,
             buf[(*idx)++] = data;
         else
         {
-            /* 缓冲区满: 丢弃当前字节, 保护已有数据
-             * 防止 idx 重置为 0 导致已积累数据被破坏 (如 ping 报文碎片化) */
+            /* 缓冲区满: 丢弃当前字节, 保护已有数据 */
         }
         USART_ClearITPendingBit(USARTx, USART_IT_RXNE);
     }
@@ -79,6 +84,7 @@ void USART2_IRQHandler(void)
 void USART3_IRQHandler(void)
 {
     UART_RX_ISR(USART3, lora_rx_buffer, &lora_rx_index, LORA_BUFFER_SIZE);
+    g_lora_isr_byte_count++;  /* 诊断: 记录 ISR 触发次数 */
 }
 
 /* ================================================================

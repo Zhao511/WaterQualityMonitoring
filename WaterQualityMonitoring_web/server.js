@@ -25,11 +25,11 @@ if (!fs.existsSync(DEVICES_FILE)) fs.writeFileSync(DEVICES_FILE, JSON.stringify(
 
 // ==================== 华为云配置 ====================
 var hwConfig = {
-    ak: 'YOUR_AK',
-    sk: 'YOUR_SK',
-    projectId: 'YOUR_PROJECT_ID',
-    productId: 'YOUR_PRODUCT_ID',    /* TODO: 华为云产品ID */
-    endpoint: 'YOUR_IOTDA_ENDPOINT'  /* TODO */
+    ak: process.env.HW_AK || '',
+    sk: process.env.HW_SK || '',
+    projectId: process.env.HW_PROJECT_ID || '',
+    productId: process.env.HW_PRODUCT_ID || '',
+    endpoint: process.env.HW_ENDPOINT || ''
 };
 // 物模型属性映射（按服务组织，IoTDA属性名 --> 系统内部字段）
 var SERVICE_PROPS = {
@@ -107,7 +107,7 @@ function getClient() {
     // 实例专用端点需要 V11-HMAC-SHA256 派生签名
     cred.withDerivedPredicate(function() { return true; });
     cred.withRegionId('cn-south-1');
-    cred.processDerivedAuthParams('iotda', 'cn-south-1');
+    cred.processDerivedAuthParams('iotdm', 'cn-south-1');  /* 与 Android 一致: "iotdm" 非 "iotda" */
     return iotda.IoTDAClient.newBuilder()
         .withCredential(cred)
         .withEndpoint(hwConfig.endpoint)
@@ -169,6 +169,7 @@ function saveDeviceStatusData(dev, props) {
     if (props.signal !== undefined) dev.signal = Number(props.signal);
     if (props.power !== undefined) dev.power = String(props.power);
     if (props.work_state !== undefined) dev.workState = String(props.work_state);
+    if (props.alarm_active !== undefined) dev.data.alarm_active = (props.alarm_active === true || props.alarm_active === 'true');
     if (props.last_report !== undefined) dev.lastReport = String(props.last_report);
 }
 
@@ -233,17 +234,14 @@ function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
     // 2. 确定存储 key：优先 RFID，没有则用 device_id
     var storageKey = rfid || deviceId;
 
-    // 3. 如果 RFID 变化（同一 device_id 上报了不同 RFID），清理旧条目
-    if (rfid) {
-        Object.keys(devices).forEach(function(key) {
-            if (key !== storageKey && devices[key].sourceDeviceId === deviceId && devices[key].rfid) {
-                // 旧 RFID 条目: 迁移历史/告警数据到新 key，然后移除
-                migrateDeviceFiles(key, storageKey);
-                delete devices[key];
-                console.log('[DEVICE] RFID 变化: ' + key + ' -> ' + storageKey);
-            }
-        });
-    }
+    // 3. 去重: 同一 sourceDeviceId 只保留一条 (修复 rfid 为空时不删除的 bug)
+    Object.keys(devices).forEach(function(key) {
+        if (key !== storageKey && devices[key].sourceDeviceId === deviceId) {
+            migrateDeviceFiles(key, storageKey);
+            delete devices[key];
+            console.log('[DEVICE] Dedup: ' + key + ' -> ' + storageKey);
+        }
+    });
 
     // 4. 新设备必须有水质属性才创建
     var isNewDevice = !devices[storageKey];
@@ -263,7 +261,7 @@ function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
             rfid: rfid, sourceDeviceId: deviceId,
             gpsRaw: '', longitude: 0, latitude: 0, gpsStatus: '',
             thresholds: { Tds_threshold: 1000, Ph_min: 6, Ph_max: 9, Temp_threshold: 50 },
-            data: { tds: 0, ph: 0, temp: 0 },
+            data: { tds: 0, ph: 0, temp: 0, alarm_active: false },
             lastUpdate: new Date().toISOString()
         };
     }
@@ -288,13 +286,13 @@ function saveDeviceData(deviceId, deviceInfo, shadowEntries) {
                     saveDeviceStatusData(dev, props);
                     break;
                 case 'Water_status':
-                    saveWaterStatusData(storageKey, dev, props);
+                    saveWaterStatusData(deviceId, dev, props);
                     break;
                 case 'gps':
                     saveGpsData(dev, props);
                     break;
                 case 'Alarm':
-                    saveAlarmData(storageKey, props);
+                    saveAlarmData(deviceId, props);
                     break;
             }
         });
@@ -426,7 +424,13 @@ app.post('/api/config', function(req, res) {
     if (b.sk) hwConfig.sk = b.sk.trim();
     if (b.projectId) hwConfig.projectId = b.projectId.trim();
     if (b.productId) hwConfig.productId = b.productId.trim();
-    if (b.endpoint) hwConfig.endpoint = b.endpoint.trim();
+    if (b.endpoint) {
+        var ep = b.endpoint.trim();
+        if (ep && !ep.startsWith('http://') && !ep.startsWith('https://')) {
+            ep = 'https://' + ep;  /* 自动补协议头 */
+        }
+        hwConfig.endpoint = ep;
+    }
     var clientId = b.clientId || '';
     console.log('[CONFIG] AK长度:', hwConfig.ak.length, 'SK长度:', hwConfig.sk.length,
                 'AK首字符:', hwConfig.ak.substring(0, 4), 'SK首字符:', hwConfig.sk.substring(0, 4),
@@ -438,6 +442,9 @@ app.post('/api/config', function(req, res) {
     }
 
     console.log('[CONFIG] 测试连接...');
+    /* 切换凭证时清空旧设备, 避免新旧设备混淆 */
+    writeJSON(DEVICES_FILE, {});
+    console.log('[CONFIG] 已清空旧设备列表');
     queryDevices().then(function(devices) {
         console.log('[CONFIG] 列出 ' + devices.length + ' 设备, 开始同步影子...');
         // 先同步一次影子数据再回复前端，确保首次 pollData 能读到数据
@@ -562,6 +569,35 @@ app.get('/api/devices/:id', function(req, res) {
     res.json({ code: 404, message: 'not found' });
 });
 
+/* 删除设备: 清除 devices.json 记录 + 历史/告警文件 */
+app.delete('/api/devices/:id', function(req, res) {
+    var id = req.params.id;
+    var devices = readJSON(DEVICES_FILE);
+    if (!devices[id]) return res.json({ code: 404, message: '设备不存在' });
+
+    delete devices[id];
+    writeJSON(DEVICES_FILE, devices);
+
+    /* 清理关联文件 */
+    try { fs.unlinkSync(path.join(HISTORY_DIR, id + '.json')); } catch(e) {}
+    try { fs.unlinkSync(path.join(ALARMS_DIR, id + '.json')); } catch(e) {}
+
+    console.log('[DEVICE] Deleted: ' + id);
+    res.json({ code: 200, message: '已删除' });
+});
+
+/* 更新设备 (名称等) */
+app.put('/api/devices/:id', function(req, res) {
+    var id = req.params.id;
+    var body = req.body || {};
+    var devices = readJSON(DEVICES_FILE);
+    if (!devices[id]) return res.json({ code: 404, message: '设备不存在' });
+
+    if (body.name) devices[id].name = body.name;
+    writeJSON(DEVICES_FILE, devices);
+    res.json({ code: 200, data: devices[id] });
+});
+
 app.get('/api/devices/:id/history', function(req, res) {
     var hFile = path.join(HISTORY_DIR, req.params.id + '.json');
     var history = [];
@@ -611,6 +647,7 @@ app.post('/api/heartbeat', function(req, res) {
     clients[clientId] = { lastHeartbeat: Date.now() };
     if (isNew) {
         console.log('[CLIENT] 心跳注册: ' + clientId + ' (总数: ' + Object.keys(clients).length + ')');
+        ensurePolling();  /* 新客户端接入时启动轮询 */
     }
     res.json({ code: 200, data: { clientCount: Object.keys(clients).length } });
 });

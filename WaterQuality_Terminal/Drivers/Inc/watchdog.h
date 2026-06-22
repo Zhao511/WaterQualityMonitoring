@@ -67,11 +67,11 @@ typedef enum {
     HEARTBEAT_COUNT
 } HeartbeatTask;
 
-#define HB_TIMEOUT_SENSOR_MS    ((TickType_t)3000)
-#define HB_TIMEOUT_GPS_MS       ((TickType_t)1000)
-#define HB_TIMEOUT_IOT_MS       ((TickType_t)5000)
-#define HB_TIMEOUT_RFID_MS      ((TickType_t)3000)
-#define HB_TIMEOUT_LED_MS       ((TickType_t)10000)
+#define HB_TIMEOUT_SENSOR_MS    ((TickType_t)10000)  /* 传感器 5s 周期 → 10s 超时 */
+#define HB_TIMEOUT_GPS_MS       ((TickType_t)3000)   /* GPS 1s 周期 → 3s 超时   */
+#define HB_TIMEOUT_IOT_MS       ((TickType_t)5000)   /* IoT 1s 周期 → 5s 超时   */
+#define HB_TIMEOUT_RFID_MS      ((TickType_t)5000)   /* RFID 2s 周期 → 5s 超时  */
+#define HB_TIMEOUT_LED_MS       ((TickType_t)15000)  /* LED 事件驱动 → 15s 超时 */
 
 /* ================================================================
  * 公开 API

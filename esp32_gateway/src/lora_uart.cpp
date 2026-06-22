@@ -94,7 +94,7 @@ void lora_init()
     /* 确认模块在线 + 配置 RF 参数 (V3.0 指令, 与 STM32 侧一致) */
     if (lora_at("AT", 800)) {
         lora_at("AT+ADDR=00,00");
-        lora_at("AT+WLRATE=2,0");
+        lora_at("AT+WLRATE=5,0");
         lora_at("AT+TPOWER=3");
         lora_at("AT+UART=7,0");
         lora_at("AT+FLASH");
@@ -137,7 +137,7 @@ uint32_t lora_frames_count()
 }
 
 /* ================================================================
- * 发送 → STM32
+ * 发送 → STM32 (旧版 JSON+换行, STM32 属性上报方向仍用此格式)
  * ================================================================ */
 void lora_send(const String &json)
 {
@@ -146,6 +146,87 @@ void lora_send(const String &json)
     LORA_SERIAL.print('\n');
     DEBUG_SERIAL.print("[LoRa TX] ");
     DEBUG_SERIAL.println(json);
+}
+
+/* ================================================================
+ * 帧协议发送 → STM32 (规范帧 + 停等ACK + 间隔 + 重发)
+ * ================================================================ */
+bool lora_send_framed(const String &payload, int max_retries)
+{
+    uint8_t len = (uint8_t)payload.length();
+    if (len > LORA_FRAME_MAX_PAYLOAD) {
+        DEBUG_SERIAL.printf("[LoRa] FRAME too large: %d > %d\n", len, LORA_FRAME_MAX_PAYLOAD);
+        return false;
+    }
+
+    /* 构造帧: [HEADER] [LEN] [PAYLOAD...] [XOR_CHECKSUM] */
+    uint8_t frame[260];  /* 1+1+250+1=253, 留余量 */
+    frame[0] = LORA_FRAME_HEADER;
+    frame[1] = len;
+    memcpy(&frame[2], payload.c_str(), len);
+    uint8_t csum = LORA_FRAME_HEADER ^ len;
+    for (uint8_t i = 0; i < len; i++) {
+        csum ^= (uint8_t)payload[i];
+    }
+    frame[2 + len] = csum;
+    int frame_size = 3 + len;
+
+    /* 禁止高速连发: 距上次发送至少 200ms */
+    static uint32_t s_last_send_ms = 0;
+    uint32_t now = millis();
+    if (now - s_last_send_ms < LORA_FRAME_MIN_INTERVAL_MS) {
+        delay(LORA_FRAME_MIN_INTERVAL_MS - (now - s_last_send_ms));
+    }
+
+    for (int retry = 0; retry <= max_retries; retry++)
+    {
+        /* 清空 RX 缓冲 (丢弃上次 NAK/残留的碎片字节) */
+        while (LORA_SERIAL.available()) { LORA_SERIAL.read(); }
+
+        lora_wait_aux(500);
+
+        LORA_SERIAL.write(frame, frame_size);
+        LORA_SERIAL.flush();
+        s_last_send_ms = millis();
+
+        DEBUG_SERIAL.printf("[LoRa TX FRAME] len=%d retry=%d csum=0x%02X\n",
+                            len, retry, csum);
+
+        /* 等 ACK: 匹配 3 字节模式 0xAA 0x00 0xAA */
+        uint8_t ack_state = 0;  /* 0=等帧头 1=等长度 2=等校验 */
+        uint32_t t0 = millis();
+        while (millis() - t0 < LORA_FRAME_ACK_TIMEOUT_MS)
+        {
+            if (LORA_SERIAL.available())
+            {
+                uint8_t b = LORA_SERIAL.read();
+
+                if (ack_state == 0) {
+                    if (b == LORA_FRAME_HEADER) ack_state = 1;
+                }
+                else if (ack_state == 1) {
+                    if (b == 0x00) ack_state = 2;           /* ACK 长度=0 */
+                    else if (b == 0xFF) { /* NAK, 不等校验字节直接重发 */
+                        DEBUG_SERIAL.println("[LoRa] NAK received");
+                        ack_state = 0;
+                        goto retry_next;
+                    }
+                    else ack_state = 0;                      /* 非 ACK/NAK, 复位 */
+                }
+                else /* ack_state == 2 */ {
+                    if (b == (LORA_FRAME_HEADER ^ 0x00)) {  /* ACK 校验=0xAA */
+                        DEBUG_SERIAL.println("[LoRa] ACK received");
+                        return true;
+                    }
+                    ack_state = 0;
+                }
+            }
+            delay(1);
+        }
+        DEBUG_SERIAL.printf("[LoRa] ACK timeout (retry=%d)\n", retry);
+retry_next: ;
+    }
+    return false;
 }
 
 /* ================================================================
@@ -171,7 +252,7 @@ void lora_loop()
                 DEBUG_SERIAL.print("[LoRa RX] ");
                 DEBUG_SERIAL.println(rx_buffer);
 
-                StaticJsonDocument<512> doc;
+                StaticJsonDocument<1024> doc;
                 DeserializationError err = deserializeJson(doc, rx_buffer);
                 if (!err)
                 {
@@ -200,8 +281,17 @@ void lora_loop()
             rx_buffer += c;
             if (rx_buffer.length() > LORA_RX_BUF_SIZE)
             {
-                DEBUG_SERIAL.println("[LoRa] RX overflow, flushed");
-                rx_buffer = "";
+                /* 缓冲区溢出: 找最后一个 '}' 作为 JSON 边界, 丢弃前面碎片 */
+                int last_brace = rx_buffer.lastIndexOf('}');
+                if (last_brace > 0 && last_brace < (int)rx_buffer.length() - 1)
+                {
+                    rx_buffer = rx_buffer.substring(last_brace + 1);
+                }
+                else
+                {
+                    DEBUG_SERIAL.println("[LoRa] RX overflow, flushed");
+                    rx_buffer = "";
+                }
             }
         }
     }

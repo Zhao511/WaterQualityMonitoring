@@ -657,51 +657,40 @@ function checkThresholds(device) {
     var els2 = document.querySelectorAll('.gauge-status');
     els2.forEach(function(el) { el.className = 'gauge-status online'; el.textContent = '设备在线'; });
 
+    /* 告警状态由 STM32 终端的 alarm_active 决定 */
+    var alarmActive = device.data && device.data.alarm_active === true;
     var curMode = getCurrentMode();
-    if (curMode === 'auto-mode') {
-        var isNormal = true;
-        var th = device.thresholds;
-        var d = device.data;
 
-        if (d.temp > th.Temp_threshold) { console.log('[CHECK] 水温超限: ' + d.temp + ' > ' + th.Temp_threshold); isNormal = false; }
-        if (d.ph < th.Ph_min || d.ph > th.Ph_max) { console.log('[CHECK] pH超限: ' + d.ph + ' 范围[' + th.Ph_min + ',' + th.Ph_max + ']'); isNormal = false; }
-        if (d.tds > th.Tds_threshold) { console.log('[CHECK] TDS超限: ' + d.tds + ' > ' + th.Tds_threshold); isNormal = false; }
-
-        console.log('[CHECK] isNormal=' + isNormal + ' curMode=' + curMode);
-        if (isNormal) {
-            statusLight.className = 'status-light status-normal';
-            document.getElementById('device-status-text').textContent = '正常';
-            // 恢复正常后清除告警标记，更新面板
-            if (device._alarmSent) {
-                device._alarmSent = false;
-                setAlarmPanelUI(false);
-                document.getElementById('alarm-list').innerHTML = '<div class=\"alarm-empty\">暂无告警记录</div>';
-            }
-        } else {
-            statusLight.className = 'status-light status-warning';
-            document.getElementById('device-status-text').textContent = '预警';
-            var alarmDetails = [];
-            if (d.temp > th.Temp_threshold) alarmDetails.push('水温超限(' + d.temp.toFixed(1) + '>' + th.Temp_threshold + ')');
-            if (d.ph < th.Ph_min || d.ph > th.Ph_max) alarmDetails.push('pH超限(' + d.ph.toFixed(1) + ')');
-            if (d.tds > th.Tds_threshold) alarmDetails.push('TDS超限(' + d.tds.toFixed(0) + '>' + th.Tds_threshold + ')');
-            addLog('warning', device.id, '自动告警触发: ' + alarmDetails.join(', '));
-            // 更新告警面板
-            setAlarmPanelUI(true, '告警中');
-            renderAlarms(alarmDetails.map(function(detail) {
-                return { alarmType: detail, alarmLevel: '警告', alarmTime: new Date().toLocaleString() };
-            }));
-            // 自动模式下超阈值 → 下发 set_alarm_mode 命令（避免重复发送）
-            if (!device._alarmSent) {
-                device._alarmSent = true;
-                sendAlarm(device.id, alarmDetails.join(','),
-                    Math.max(d.temp || 0, d.ph || 0, d.tds || 0),
-                    Math.max(th.Temp_threshold || 50, th.Ph_max || 9, th.Tds_threshold || 1000),
-                    '警告');
-            }
+    if (alarmActive) {
+        /* STM32 处于告警中 → 红色 */
+        statusLight.className = 'status-light status-alarm';
+        document.getElementById('device-status-text').textContent = '告警中';
+        setAlarmPanelUI(true, '告警中');
+        if (!device._alarmSent) {
+            device._alarmSent = true;
         }
     } else {
+        /* STM32 未告警 → 绿色 */
         statusLight.className = 'status-light status-normal';
         document.getElementById('device-status-text').textContent = '正常';
+        if (device._alarmSent) {
+            device._alarmSent = false;
+            setAlarmPanelUI(false);
+            document.getElementById('alarm-list').innerHTML = '<div class=\"alarm-empty\">暂无告警记录</div>';
+        }
+    }
+
+    /* 自动模式下的阈值预警 (仅本地显示, 不再自动下发告警命令) */
+    if (!alarmActive && curMode === 'auto-mode') {
+        var th = device.thresholds;
+        var d = device.data;
+        var warnings = [];
+        if (d.temp > th.Temp_threshold) warnings.push('水温超限(' + d.temp.toFixed(1) + '>' + th.Temp_threshold + ')');
+        if (d.ph < th.Ph_min || d.ph > th.Ph_max) warnings.push('pH超限(' + d.ph.toFixed(1) + ')');
+        if (d.tds > th.Tds_threshold) warnings.push('TDS超限(' + d.tds.toFixed(0) + '>' + th.Tds_threshold + ')');
+        if (warnings.length > 0) {
+            addLog('warning', device.id, '阈值预警: ' + warnings.join(', '));
+        }
     }
 }
 

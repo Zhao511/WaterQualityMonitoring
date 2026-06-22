@@ -16,9 +16,7 @@ class IoTDAApi {
     fun configure(ak: String, sk: String, projectId: String, productId: String = "", endpoint: String = "") {
         this.projectId = projectId
         this.productId = productId
-        this.endpoint = endpoint.ifEmpty {
-            "https://YOUR_INSTANCE_ID.st1.iotda-app.cn-south-1.myhuaweicloud.com"
-        }
+        this.endpoint = endpoint.ifEmpty { "" }
         android.util.Log.d("IOTDA", "configure: ak=$ak projectId=$projectId productId=$productId endpoint=${this.endpoint}")
 
         val credentials = BasicCredentials()

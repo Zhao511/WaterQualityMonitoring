@@ -442,7 +442,9 @@
               <FilePath>.\Drivers\Src\usart_debug.c</FilePath>
             </File>
             <File>
+              <FileName>sensor_turbidity.c</FileName>
               <FileType>1</FileType>
+              <FilePath>.\Drivers\Src\sensor_turbidity.c</FilePath>
             </File>
             <File>
               <FileName>sensor_tds.c</FileName>

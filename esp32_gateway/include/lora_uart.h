@@ -36,6 +36,23 @@ void lora_loop();
 void lora_send(const String &json);
 
 /* ================================================================
+ * 帧协议发送 (规范帧 + 停等ACK + 间隔控制 + 超时重发)
+ *
+ * 帧格式: [0xAA] [LEN 1B] [PAYLOAD LEN bytes] [XOR_CHECKSUM 1B]
+ * ACK 帧: [0xAA] [0x00] [0xAA]  (3字节, LEN=0 表示ACK)
+ * NAK 帧: [0xAA] [0xFF] [0x55]  (3字节, LEN=0xFF 表示NAK)
+ *
+ * 行为: 发帧 → 等ACK(≤500ms) → 超时重发(最多2次) → 发前≥200ms间隔
+ * 返回: true=收到ACK, false=全部重发失败
+ * ================================================================ */
+#define LORA_FRAME_HEADER           0xAA
+#define LORA_FRAME_MAX_PAYLOAD      200
+#define LORA_FRAME_ACK_TIMEOUT_MS   500
+#define LORA_FRAME_MIN_INTERVAL_MS  200
+
+bool lora_send_framed(const String &payload, int max_retries = 2);
+
+/* ================================================================
  * 接收 — STM32 → ESP32 (回调注册)
  * ================================================================ */
 typedef void (*lora_rx_callback_t)(const String &svc, const String &json);
