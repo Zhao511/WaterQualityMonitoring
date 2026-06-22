@@ -24,6 +24,15 @@
 #define IOT_DEVICE_ID_MAX    16
 #define IOT_DEVICE_ID_DEFAULT "WQ_001"
 #define IOT_RFID_LEN         11
+
+/* 终端地址 — 从 RFID 卡 UID 自动派生 (取最后一字节)
+ *   0 = 广播模式 (未读到RFID时默认, 接收所有帧, 兼容旧版一对一部署)
+ *   1~254 = 定向地址 (读到RFID后自动设置, 仅处理地址匹配的帧)
+ *   255 = 保留
+ * 注意: 同一个网关上电的多台终端需使用不同的 RFID 卡, 否则会地址冲突 */
+extern uint8_t g_terminal_addr;
+extern bool    g_gps_enabled;
+extern bool    g_pending_device_status_report;
 #define IOT_GPS_STR_LEN      32
 #define IOT_TIME_STR_LEN     20
 #define IOT_ALARM_ID_LEN     20
@@ -177,9 +186,9 @@ typedef struct {
  * 上报间隔默认值 (秒)
  * 原则: STM32 常态保持 RX 模式监听 ESP32 指令, 非必要不切 TX
  * ================================================================ */
-#define IOT_DEFAULT_REPORT_INTERVAL   60     /* Water_status 上报间隔   */
-#define IOT_DEVICE_STATUS_INTERVAL    120    /* DeviceStatus 上报间隔   */
-#define IOT_GPS_REPORT_INTERVAL       120    /* GPS 上报间隔            */
+#define IOT_DEFAULT_REPORT_INTERVAL   30     /* Water_status 上报间隔   */
+#define IOT_DEVICE_STATUS_INTERVAL    60     /* DeviceStatus 上报间隔   */
+#define IOT_GPS_REPORT_INTERVAL       60     /* GPS 上报间隔            */
 
 #ifdef __cplusplus
 }

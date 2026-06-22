@@ -635,6 +635,7 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
         }
 
         if (strcmp(cmd, "request_location") == 0) {
+            g_gps_enabled = true;  /* 按需开启 GPS, vGPSTask 将在后续周期更新定位 */
             IOT_GPS_GetDecimal(&g_gps_data);
             snprintf(rsp_buf, max_len,
                 "{\"rsp\":\"%s\",\"result\":true,\"msg\":\"ok\","
@@ -669,16 +670,16 @@ bool IOT_Cmd_Dispatch(const char *svc, const char *cmd,
 
         g_sync_tick_base = xTaskGetTickCount();
 
-        /* 解析 manual_time: 支持 "HH:MM:SS" 格式和纯数字 Unix 时间戳 */
+        /* 解析 manual_time: 支持 "HH:MM:SS" 格式 (北京时间) 和纯数字 Unix 时间戳 (UTC)
+         * Unix 时间戳 +8 小时 = 北京时间当日秒数 */
         if (manual_time[0] != '\0') {
             int hh = 0, mm = 0, ss = 0;
             if (sscanf(manual_time, "%d:%d:%d", &hh, &mm, &ss) == 3) {
                 g_sync_time_base = (uint32_t)(hh * 3600 + mm * 60 + ss);
             } else {
-                /* 尝试作为 Unix 时间戳解析, 转换为当日秒数 (UTC) */
                 long ts = atol(manual_time);
                 if (ts > 0) {
-                    g_sync_time_base = (uint32_t)(ts % 86400);
+                    g_sync_time_base = (uint32_t)((ts + 28800) % 86400);  /* UTC+8 */
                 }
             }
         }

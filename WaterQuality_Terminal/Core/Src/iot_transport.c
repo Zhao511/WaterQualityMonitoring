@@ -48,18 +48,24 @@ void IOT_Report_Property(const char *json_payload)
 #define FRAME_ACK_PAYLOAD   0x00   /* ACK 帧载荷长度 (0=ACK)        */
 #define FRAME_NAK_PAYLOAD   0xFF   /* NAK 帧载荷长度 (0xFF=NAK)     */
 
+/* 前置声明 */
+void IOT_Report_DeviceStatus(const DeviceStatus *s);
+
 /* 接收状态机 */
 typedef enum {
     FRAME_IDLE,                    /* 等待帧头 0xAA                 */
     FRAME_GOT_HEADER,              /* 已收帧头, 等待长度字节         */
+    FRAME_GOT_ADDR,                /* 已收长度, 等待/检查地址字节    */
     FRAME_READING,                 /* 正在收载荷                     */
     FRAME_GOT_CHECKSUM            /* 已收校验, 等待验证             */
 } FrameState;
 
-static FrameState frame_state = FRAME_IDLE;
+static FrameState frame_state   = FRAME_IDLE;
 static uint8_t    frame_payload[FRAME_MAX_PAYLOAD];
-static uint8_t    frame_length = 0;
-static uint8_t    frame_index  = 0;
+static uint8_t    frame_length  = 0;   /* 载荷长度 (不含地址字节)    */
+static uint8_t    frame_index   = 0;
+static bool       frame_ignored = false; /* 地址不匹配, 静默丢弃    */
+static uint8_t    frame_dst_addr = 0;   /* 实际收到的目标地址(用于校验)*/
 
 /* ---- 发送 ACK/NAK 帧 (3 字节: 帧头+长度+校验) ---- */
 static void Frame_SendAck(void)
@@ -123,19 +129,43 @@ void IOT_Process_Incoming(void)
         case FRAME_GOT_HEADER:
             frame_length = byte;
             if (frame_length == FRAME_ACK_PAYLOAD) {
-                /* 网关发来的 ACK 帧 (长度=0), 忽略 (STM32 不发 ACK) */
-                /* 校验字节会在下一个状态被消费, 但这里直接跳过 */
-                frame_state = FRAME_IDLE;  /* 等下一个校验字节不实际, 直接复位 */
-                /* 注意: 下一字节是 ACK 的校验字节, 会被当作垃圾丢弃 */
+                /* 网关发来的 ACK 帧 (长度=0), 忽略 */
+                frame_state = FRAME_IDLE;
             } else if (frame_length == FRAME_NAK_PAYLOAD) {
                 /* 网关发来的 NAK 帧, 忽略 */
                 frame_state = FRAME_IDLE;
-            } else if (frame_length > 0 && frame_length <= FRAME_MAX_PAYLOAD) {
-                frame_index = 0;
-                frame_state = FRAME_READING;
+            } else if (frame_length >= 1 && frame_length <= (FRAME_MAX_PAYLOAD + 1)) {
+                /* LEN 包含地址字节, 有效帧: LEN=1(仅地址) 到 LEN=201(地址+200B载荷)
+                 * 进入地址检查状态 */
+                frame_state = FRAME_GOT_ADDR;
             } else {
                 /* 非法长度, 帧头可能是假阳性, 复位 */
                 frame_state = FRAME_IDLE;
+            }
+            break;
+
+        case FRAME_GOT_ADDR:
+            {
+                frame_dst_addr = byte;  /* 保存实际地址, 用于校验计算 */
+                /* LEN 包含 DST_ADDR 自身; 纯载荷 = LEN - 1 */
+                uint8_t payload_len = frame_length - 1;
+
+                /* 检查地址: 广播(0x00) 或 匹配本机地址 → 处理 */
+                if (frame_dst_addr == 0x00 || frame_dst_addr == g_terminal_addr) {
+                    frame_ignored = false;
+                } else {
+                    /* 不是发给本机的, 静默消费剩余字节但不处理 */
+                    frame_ignored = true;
+                }
+
+                if (payload_len == 0) {
+                    /* 仅有地址, 无载荷 (如未来的寻址 ping) */
+                    frame_state = FRAME_GOT_CHECKSUM;
+                } else {
+                    frame_length = payload_len;  /* 后续使用纯载荷长度 */
+                    frame_index  = 0;
+                    frame_state  = FRAME_READING;
+                }
             }
             break;
 
@@ -148,11 +178,23 @@ void IOT_Process_Incoming(void)
 
         case FRAME_GOT_CHECKSUM:
             {
-                /* 计算 XOR 校验: 帧头 ^ 长度 ^ 载荷逐字节 */
-                uint8_t calc_csum = FRAME_HEADER ^ frame_length;
+                if (frame_ignored) {
+                    /* 地址不匹配: 静默丢弃, 不发 ACK/NAK (避免碰撞) */
+                    frame_state = FRAME_IDLE;
+                    break;
+                }
+
+                /* 计算 XOR 校验: 帧头 ^ LEN(含地址) ^ DST_ADDR(实际收到) ^ 载荷逐字节
+                 * 注: frame_length 在此处已变为纯载荷长度 (见 FRAME_GOT_ADDR),
+                 *     frame_dst_addr 是实际收到的目标地址 (广播=0x00 或本机地址) */
+                uint8_t orig_len = frame_length + 1;  /* 恢复原始 LEN */
+                uint8_t calc_csum = FRAME_HEADER ^ orig_len ^ frame_dst_addr;
                 for (uint8_t j = 0; j < frame_length; j++) {
                     calc_csum ^= frame_payload[j];
                 }
+
+                Debug_Printf("[IoT] FRAME csum: calc=0x%02X recv=0x%02X len=%d addr=%d ignored=%d\r\n",
+                             calc_csum, byte, frame_length, frame_dst_addr, frame_ignored);
 
                 if (byte == calc_csum) {
                     /* 校验通过 → ACK → 处理载荷 */
@@ -166,10 +208,12 @@ void IOT_Process_Incoming(void)
                         if (frame_payload[1] == '0') {
                             g_device_status.alarm_active = true;
                             LED_RGB_SetColor(LED_COLOR_RED);
+                            g_pending_device_status_report = true;
                             Debug_Printf("[IoT] A0: alarm_active=true LED=RED\r\n");
                         } else if (frame_payload[1] == '1') {
                             g_device_status.alarm_active = false;
                             LED_RGB_SetColor(LED_COLOR_GREEN);
+                            g_pending_device_status_report = true;
                             Debug_Printf("[IoT] A1: alarm_active=false LED=GREEN\r\n");
                         }
                     }

@@ -62,8 +62,11 @@ class IoTDARepository(private val api: IoTDAApi = IoTDAApi()) {
         return dev
     }
 
-    suspend fun sendAlarmCommand(deviceId: String, alarmMode: String) = withContext(Dispatchers.IO) {
-        api.createCommand(deviceId, "Alarm", "set_alarm_mode",
-            mapOf("mode" to alarmMode, "buffer_time" to 0))
+    suspend fun sendAlarmCommand(deviceId: String, alarmMode: String, rfid: String? = null) = withContext(Dispatchers.IO) {
+        val paras = mutableMapOf<String, Any>("mode" to alarmMode, "buffer_time" to 0)
+        if (!rfid.isNullOrBlank()) {
+            paras["rfid"] = rfid
+        }
+        api.createCommand(deviceId, "Alarm", "set_alarm_mode", paras)
     }
 }

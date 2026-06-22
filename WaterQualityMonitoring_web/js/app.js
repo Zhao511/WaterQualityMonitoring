@@ -657,39 +657,87 @@ function checkThresholds(device) {
     var els2 = document.querySelectorAll('.gauge-status');
     els2.forEach(function(el) { el.className = 'gauge-status online'; el.textContent = '设备在线'; });
 
-    /* 告警状态由 STM32 终端的 alarm_active 决定 */
     var alarmActive = device.data && device.data.alarm_active === true;
     var curMode = getCurrentMode();
 
+    /* ---- 自动模式: 自维护告警状态, 不依赖终端回执 ---- */
+    if (curMode === 'auto-mode') {
+        var th = device.thresholds;
+        var d = device.data;
+        var exceeded = (d.temp > th.Temp_threshold) ||
+                       (d.ph < th.Ph_min || d.ph > th.Ph_max) ||
+                       (d.tds > th.Tds_threshold);
+
+        if (exceeded && !device._autoAlarmActive) {
+            /* 超标 → 下发告警 + 本地标记 */
+            console.log('[AUTO] 超标，下发告警');
+            addLog('warning', device.id, '自动告警: 阈值超标');
+            device._autoAlarmActive = true;
+            sendAlarm(device.id, '自动触发', d.tds, th.Tds_threshold, '警告');
+            /* UI 立即更新, 不等待终端回执 */
+            statusLight.className = 'status-light status-alarm';
+            document.getElementById('device-status-text').textContent = '告警中';
+            setAlarmPanelUI(true, '自动告警中');
+        } else if (!exceeded && device._autoAlarmActive) {
+            /* 指标恢复正常 → 下发关闭 + 清除标记 */
+            console.log('[AUTO] 指标正常，关闭告警');
+            addLog('info', device.id, '自动恢复: 指标正常');
+            device._autoAlarmActive = false;
+            stopAlarm(device.id);
+            /* UI 立即更新 */
+            statusLight.className = 'status-light status-normal';
+            document.getElementById('device-status-text').textContent = '正常';
+            setAlarmPanelUI(false);
+            device._alarmSent = false;
+        } else if (exceeded && device._autoAlarmActive) {
+            /* 持续超标: 更新 UI 保持告警状态 */
+            statusLight.className = 'status-light status-alarm';
+            document.getElementById('device-status-text').textContent = '告警中';
+            /* 每 30s 重发一次告警命令 (应对 LoRa 丢包) */
+            if (!device._autoAlarmLastSend || (Date.now() - device._autoAlarmLastSend) > 30000) {
+                console.log('[AUTO] 持续超标，重发告警');
+                device._autoAlarmLastSend = Date.now();
+                sendAlarm(device.id, '自动触发', d.tds, th.Tds_threshold, '警告');
+            }
+        } else {
+            /* 指标正常 + 未告警: 保持正常 UI */
+            statusLight.className = 'status-light status-normal';
+            document.getElementById('device-status-text').textContent = '正常';
+        }
+        return;  /* 自动模式: 跳过下面的手动模式 UI 逻辑 */
+    }
+
+    /* ---- 手动模式: UI 由终端 alarm_active 决定 + pending 防翻转 ---- */
+    if (device._alarmPending && (Date.now() - device._alarmPending) > 60000) {
+        device._alarmPending = 0;
+    }
+
     if (alarmActive) {
-        /* STM32 处于告警中 → 红色 */
+        if (device._alarmPending && device._alarmPendingStop) {
+            /* 已下发停止, 等待终端确认 → 保持当前显示不变 */
+            return;
+        }
+        /* 终端确认告警中 (或等待开启确认) → 红色 */
         statusLight.className = 'status-light status-alarm';
         document.getElementById('device-status-text').textContent = '告警中';
         setAlarmPanelUI(true, '告警中');
-        if (!device._alarmSent) {
-            device._alarmSent = true;
-        }
+        device._alarmPending = 0;
+        if (!device._alarmSent) device._alarmSent = true;
     } else {
-        /* STM32 未告警 → 绿色 */
+        if (device._alarmPending && !device._alarmPendingStop) {
+            /* 已下发开启, 等待终端确认 → 保持当前显示不变 */
+            return;
+        }
+        /* 终端确认关闭 (或空闲) → 绿色 */
+        if (device._alarmPending) {
+            device._alarmPending = 0;
+            device._alarmPendingStop = false;
+        }
         statusLight.className = 'status-light status-normal';
         document.getElementById('device-status-text').textContent = '正常';
         if (device._alarmSent) {
             device._alarmSent = false;
             setAlarmPanelUI(false);
-            document.getElementById('alarm-list').innerHTML = '<div class=\"alarm-empty\">暂无告警记录</div>';
-        }
-    }
-
-    /* 自动模式下的阈值预警 (仅本地显示, 不再自动下发告警命令) */
-    if (!alarmActive && curMode === 'auto-mode') {
-        var th = device.thresholds;
-        var d = device.data;
-        var warnings = [];
-        if (d.temp > th.Temp_threshold) warnings.push('水温超限(' + d.temp.toFixed(1) + '>' + th.Temp_threshold + ')');
-        if (d.ph < th.Ph_min || d.ph > th.Ph_max) warnings.push('pH超限(' + d.ph.toFixed(1) + ')');
-        if (d.tds > th.Tds_threshold) warnings.push('TDS超限(' + d.tds.toFixed(0) + '>' + th.Tds_threshold + ')');
-        if (warnings.length > 0) {
-            addLog('warning', device.id, '阈值预警: ' + warnings.join(', '));
         }
     }
 }
@@ -807,6 +855,8 @@ function toggleAlarm(enabled) {
             showToast('设备离线状态下无法启用手动告警', 'error');
             return;
         }
+        dev._alarmPending = Date.now();  /* 等待终端确认告警 */
+        dev._alarmPendingStop = false;   /* 方向: 开启 */
         setAlarmPanelUI(true, '告警已下发');
         addLog('warning', dev.id, '手动触发水质告警 → 下发命令到云端');
         // 下发 set_alarm_mode 命令到设备
@@ -814,6 +864,10 @@ function toggleAlarm(enabled) {
         showToast('报警命令已下发到云端', 'info');
     } else {
         var dev2 = getCurrentDevice();
+        if (dev2) {
+            dev2._alarmPending = Date.now();      /* 等待终端确认 */
+            dev2._alarmPendingStop = true;        /* 方向: 关闭 */
+        }
         setAlarmPanelUI(false);
         if (dev2) {
             addLog('info', dev2.id, '手动关闭水质告警 → 下发停止命令');
@@ -862,6 +916,7 @@ function sendAlarm(deviceId, alarmType, currentValue, threshold, alarmLevel) {
     }).then(function(res) {
         if (res.code === 200) {
             console.log('[ALARM] 报警命令已下发到云端');
+            fetchAlarms(deviceId);   /* 刷新告警记录列表 */
         } else {
             console.error('[ALARM] 下发失败:', res.message);
         }
@@ -879,6 +934,7 @@ function stopAlarm(deviceId) {
     }).then(function(res) {
         if (res.code === 200) {
             console.log('[ALARM] 停止命令已下发到云端');
+            fetchAlarms(deviceId);   /* 刷新告警记录列表 */
         }
     }).catch(function(err) {
         console.error('[ALARM] 请求失败:', err.message);
@@ -1006,13 +1062,15 @@ function pollData() {
                     rfid: dev.rfid || '', longitude: dev.longitude || 0, latitude: dev.latitude || 0,
                     gpsStatus: dev.gpsStatus || '', gpsRaw: dev.gpsRaw || '',
                     thresholds: dev.thresholds || { Tds_threshold: 1000, Ph_min: 6, Ph_max: 9, Temp_threshold: 50 },
-                    data: dev.data || { tds: 0, ph: 0, temp: 0 },
+                    data: dev.data || { tds: 0, ph: 0, temp: 0, alarm_active: false },
                     lastUpdate: Date.now()
                 };
                 changed = true;
             } else {
                 var oldData = JSON.stringify(CONFIG.devices[id].data);
-                CONFIG.devices[id].data = dev.data || CONFIG.devices[id].data;
+                if (dev.data) {
+                    Object.assign(CONFIG.devices[id].data, dev.data);
+                }
                 // 用 !== undefined 判断，防止 false/0/'' 等假值被跳过
                 if (dev.status !== undefined) CONFIG.devices[id].status = dev.status;
                 if (dev.statusOnline !== undefined) CONFIG.devices[id].statusOnline = dev.statusOnline;

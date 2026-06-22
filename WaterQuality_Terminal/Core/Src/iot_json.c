@@ -76,7 +76,8 @@ int iot_json_serialize_device_status(const DeviceStatus *s,
         "\"power\":\"%s\","
         "\"work_state\":\"%s\","
         "\"alarm_active\":%s,"
-        "\"last_report\":\"%s\""
+        "\"last_report\":\"%s\","
+        "\"addr\":%d"
         "}}",
         s->online ? "true" : "false",
         s->battery,
@@ -84,7 +85,8 @@ int iot_json_serialize_device_status(const DeviceStatus *s,
         power_source_str(s->power),
         work_state_str(s->work_state),
         s->alarm_active ? "true" : "false",
-        s->last_report);
+        s->last_report,
+        g_terminal_addr);
 
     return (int)(p - buf);
 }
@@ -104,13 +106,15 @@ int iot_json_serialize_water_status(const WaterStatus *s,
         "\"pH\":%.2f,"
         "\"temp\":%.1f,"
         "\"rfid\":\"%s\","
-        "\"gps\":\"%s\""
+        "\"gps\":\"%s\","
+        "\"addr\":%d"
         "}}",
         s->tds,
         s->ph,
         s->temp,
         s->rfid,
-        s->gps);
+        s->gps,
+        g_terminal_addr);
 
     return (int)(p - buf);
 }
@@ -134,7 +138,8 @@ int iot_json_serialize_alarm(const Alarm *a,
         "\"threshold\":%.2f,"
         "\"alarm_level\":\"%s\","
         "\"alarm_time\":\"%s\","
-        "\"status\":\"%s\""
+        "\"status\":\"%s\","
+        "\"addr\":%d"
         "}}",
         a->alarm_id,
         alarm_type_str(a->alarm_type),
@@ -143,7 +148,8 @@ int iot_json_serialize_alarm(const Alarm *a,
         a->threshold,
         alarm_level_str(a->alarm_level),
         a->alarm_time,
-        alarm_status_str(a->status));
+        alarm_status_str(a->status),
+        g_terminal_addr);
 
     return (int)(p - buf);
 }
@@ -161,11 +167,13 @@ int iot_json_serialize_gps(const GPS *g,
         "{\"service_id\":\"gps\",\"properties\":{"
         "\"longitude\":%.6f,"
         "\"latitude\":%.6f,"
-        "\"gps_status\":%d"
+        "\"gps_status\":%d,"
+        "\"addr\":%d"
         "}}",
         g->longitude,
         g->latitude,
-        (int)g->gps_status);
+        (int)g->gps_status,
+        g_terminal_addr);
 
     return (int)(p - buf);
 }

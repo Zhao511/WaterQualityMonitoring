@@ -13,10 +13,22 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <map>
 #include "config.h"
 #include "thing_model.h"
 #include "lora_uart.h"
 #include "mqtt_huawei.h"
+
+/* ================================================================
+ * 终端路由表 — RFID → LoRa 地址 映射
+ * 自动学习: 收到 Water_status 上报时, 从 rfid+addr 字段建立映射
+ * 老化机制: 5 分钟未收到终端数据则移除路由
+ * ================================================================ */
+struct TerminalRoute {
+    uint8_t addr;
+    uint32_t last_seen_ms;
+};
+static std::map<String, TerminalRoute> g_terminal_routes;
 
 /* ================================================================
  * LED 状态指示
@@ -58,6 +70,21 @@ static void on_lora_receive(const String &svc, const String &json)
     if (svc == "DeviceStatus" || svc == "Water_status" ||
         svc == "Alarm" || svc == "gps")
     {
+        /* ---- 自动学习终端路由: 从属性上报提取 rfid+addr, 建立映射 ---- */
+        StaticJsonDocument<1024> prop_doc;
+        DeserializationError prop_err = deserializeJson(prop_doc, json);
+        if (!prop_err) {
+            JsonObject props = prop_doc["properties"];
+            int addr = props["addr"] | -1;
+            const char *rfid = props["rfid"] | "";
+            if (addr >= 0 && strlen(rfid) > 0) {
+                TerminalRoute &r = g_terminal_routes[String(rfid)];
+                r.addr = (uint8_t)addr;
+                r.last_seen_ms = millis();
+                DEBUG_SERIAL.printf("[ROUTE] learned RFID=%s -> addr=%d\n", rfid, addr);
+            }
+        }
+
         /* 属性上报 → 直接转发到华为云 */
         mqtt_report_property(json);
     }
@@ -136,6 +163,22 @@ static void on_cloud_command(const String &cmd_json)
     const char *svc = doc["service_id"] | "";
     const char *cmd = doc["command_name"] | "";
 
+    /* ---- 查找目标终端地址: 从命令 paras.rfid 查路由表 ---- */
+    const char *target_rfid = doc["paras"]["rfid"] | "";
+    uint8_t dst_addr = LORA_FRAME_ADDR_BROADCAST;  /* 默认广播 */
+
+    if (strlen(target_rfid) > 0) {
+        auto it = g_terminal_routes.find(String(target_rfid));
+        if (it != g_terminal_routes.end()) {
+            dst_addr = it->second.addr;
+            DEBUG_SERIAL.printf("[ROUTE] RFID=%s -> addr=%d (directed)\n",
+                                target_rfid, dst_addr);
+        } else {
+            DEBUG_SERIAL.printf("[ROUTE] RFID=%s not found, using broadcast\n",
+                                target_rfid);
+        }
+    }
+
     /* ---- 极简告警控制: set_alarm_mode → A0/A1 ----
      * 自动/手动模式判断由 Web/App 负责, ESP32 仅翻译
      * "alert"/"auto" → A0 (开启告警)
@@ -145,11 +188,12 @@ static void on_cloud_command(const String &cmd_json)
         const char *mode = doc["paras"]["mode"] | "";
         bool disable = (strcmp(mode, "normal") == 0 || strcmp(mode, "manual") == 0);
 
-        DEBUG_SERIAL.printf("[FWD] set_alarm_mode mode=%s -> %s\n",
-                            mode, disable ? "A1 (disable)" : "A0 (enable)");
+        DEBUG_SERIAL.printf("[FWD] set_alarm_mode mode=%s -> %s  dst=%d\n",
+                            mode, disable ? "A1 (disable)" : "A0 (enable)",
+                            dst_addr);
 
-        /* 帧协议发送 + 停等 ACK */
-        bool acked = lora_send_framed(disable ? "A1" : "A0");
+        /* 帧协议发送 (带终端地址) + 停等 ACK */
+        bool acked = lora_send_framed(disable ? "A1" : "A0", dst_addr);
 
         /* 云端回复: ACK 确认后才返回成功 */
         StaticJsonDocument<256> rsp;
@@ -175,7 +219,8 @@ static void on_cloud_command(const String &cmd_json)
     String fwd_json;
     serializeJson(fwd, fwd_json);
 
-    lora_send_framed(fwd_json);
+    /* 帧协议发送 (带终端地址) */
+    lora_send_framed(fwd_json, dst_addr);
 }
 
 /* ================================================================
@@ -222,6 +267,28 @@ static void lora_ping_check()
         lora_send_framed("{\"ping\":1}");
     }
     frames_last = lora_frames_count();
+}
+
+/* 路由老化: 清理超过 5 分钟未更新的终端路由 */
+#define ROUTE_AGE_TIMEOUT_MS    (5 * 60 * 1000)
+
+static void route_cleanup()
+{
+    static uint32_t s_last_cleanup = 0;
+    uint32_t now = millis();
+    if (now - s_last_cleanup < 30000) return;  /* 每 30s 检查一次 */
+    s_last_cleanup = now;
+
+    auto it = g_terminal_routes.begin();
+    while (it != g_terminal_routes.end()) {
+        if (now - it->second.last_seen_ms > ROUTE_AGE_TIMEOUT_MS) {
+            DEBUG_SERIAL.printf("[ROUTE] aged out RFID=%s addr=%d\n",
+                                it->first.c_str(), it->second.addr);
+            it = g_terminal_routes.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 /* ================================================================
@@ -276,4 +343,7 @@ void loop()
 
     /* LoRa 链路探测: 收不到数据时主动 ping STM32 */
     lora_ping_check();
+
+    /* 路由老化: 清理超时终端 */
+    route_cleanup();
 }

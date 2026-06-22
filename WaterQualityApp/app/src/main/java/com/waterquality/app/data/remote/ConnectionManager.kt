@@ -40,6 +40,8 @@ object ConnectionManager {
     private val prefs = PreferencesManager(WaterQualityApp.instance)
     private var pollingJob: Job? = null
     private var alarmSent = false
+    private var autoAlarmActive = false        /* 自动模式: 本地告警标记 */
+    private var autoAlarmLastSend = 0L         /* 自动模式: 上次下发时间戳 */
     private var pollingPausedForBackground = false
     private var isActivityDestroyed = false
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -148,7 +150,12 @@ object ConnectionManager {
     private fun startPolling() {
         pollingJob?.cancel()
         pollingJob = scope.launch {
+            var lastSync = 0L
             while (isActive) {
+                val elapsed = System.currentTimeMillis() - lastSync
+                if (elapsed < 3000L) delay(3000L - elapsed)  /* 固定 3s 周期 */
+                lastSync = System.currentTimeMillis()
+
                 try {
                     val devices = repository.syncDevices()
                     if (devices.isNotEmpty()) {
@@ -172,7 +179,6 @@ object ConnectionManager {
                     val cached = prefs.getDeviceList()
                     if (cached.isNotEmpty()) _devices.postValue(cached)
                 }
-                delay(5000)
             }
         }
     }
@@ -187,7 +193,11 @@ object ConnectionManager {
 
     fun setAutoMode(enabled: Boolean) {
         prefs.isAutoMode = enabled
-        if (!enabled) { _alarmActive.value = false }
+        if (!enabled) {
+            _alarmActive.value = false
+            autoAlarmActive = false
+            autoAlarmLastSend = 0L
+        }
     }
 
     fun updateThreshold(deviceId: String, t: Thresholds) {
@@ -210,23 +220,26 @@ object ConnectionManager {
         _alarmActive.postValue(true)
         _alarmRecords.postValue(listOf("手动触发告警 - ${dev.id}"))
         scope.launch(Dispatchers.IO) {
-            repository.sendAlarmCommand(dev.id, "alert")
-            // 同时通知 Web 后端
+            repository.sendAlarmCommand(dev.id, "alert", dev.rfid)
             WebApiService.triggerAlarm(dev.id, "手动触发")
+            fetchAlarms(dev.id)   /* 刷新告警记录 */
         }
         addLog("warning", dev.id, "手动触发告警")
     }
 
     fun stopAlarm() {
-        if (prefs.isAutoMode) return
+        if (prefs.isAutoMode) {
+            _alarmRecords.postValue(listOf("自动模式下请切换阈值或等待自动恢复，不可手动关闭"))
+            return
+        }
         val dev = _currentDevice.value
         if (dev == null) return
         _alarmActive.postValue(false)
         _alarmRecords.postValue(emptyList())
         scope.launch(Dispatchers.IO) {
-            repository.sendAlarmCommand(dev.id, "normal")
-            // 同时通知 Web 后端
+            repository.sendAlarmCommand(dev.id, "normal", dev.rfid)
             WebApiService.stopAlarm(dev.id)
+            fetchAlarms(dev.id)   /* 刷新告警记录 */
         }
         addLog("success", dev.id, "手动关闭告警")
     }
@@ -234,21 +247,56 @@ object ConnectionManager {
     private fun checkAutoAlarm(device: Device) {
         if (!prefs.isAutoMode) return
 
-        /* 告警状态由 STM32 终端的 alarm_active 决定, 不在 App 本地判断阈值 */
-        val alarmActive = device.data["alarm_active"]?.let { it as? Boolean } ?: false
+        val d = device.data
+        val th = device.thresholds
+        val exceeded = (d.temp > th.Temp_threshold) ||
+                       (d.ph < th.Ph_min || d.ph > th.Ph_max) ||
+                       (d.tds > th.Tds_threshold)
+        val now = System.currentTimeMillis()
 
-        if (alarmActive) {
-            _alarmActive.postValue(true)
-            if (!alarmSent) {
-                alarmSent = true
-                addLog("warning", device.id, "STM32 终端告警中")
+        when {
+            exceeded && !autoAlarmActive -> {
+                /* 超标 → 下发告警 */
+                autoAlarmActive = true
+                autoAlarmLastSend = now
+                _alarmActive.postValue(true)
+                _alarmRecords.postValue(listOf("自动告警: 阈值超标"))
+                scope.launch(Dispatchers.IO) {
+                    repository.sendAlarmCommand(device.id, "alert", device.rfid)
+                    WebApiService.triggerAlarm(device.id, "自动触发")
+                }
+                addLog("warning", device.id, "自动告警: 阈值超标")
+                fetchAlarms(device.id)   /* 刷新告警记录列表 */
             }
-        } else {
-            if (alarmSent) {
-                alarmSent = false
+
+            !exceeded && autoAlarmActive -> {
+                /* 恢复正常 → 关闭告警 */
+                autoAlarmActive = false
+                autoAlarmLastSend = 0L
                 _alarmActive.postValue(false)
                 _alarmRecords.postValue(emptyList())
-                addLog("info", device.id, "STM32 终端告警已清除，恢复正常")
+                scope.launch(Dispatchers.IO) {
+                    repository.sendAlarmCommand(device.id, "normal", device.rfid)
+                    WebApiService.stopAlarm(device.id)
+                }
+                addLog("info", device.id, "自动恢复: 指标正常")
+                fetchAlarms(device.id)   /* 刷新告警记录列表 */
+            }
+
+            exceeded && autoAlarmActive -> {
+                /* 持续超标: 保持告警状态, 每 30s 重发一次 (应对 LoRa 丢包) */
+                _alarmActive.postValue(true)
+                if (now - autoAlarmLastSend > 30_000L) {
+                    autoAlarmLastSend = now
+                    scope.launch(Dispatchers.IO) {
+                        repository.sendAlarmCommand(device.id, "alert", device.rfid)
+                    }
+                    addLog("warning", device.id, "持续超标，重发告警")
+                }
+            }
+
+            else -> {
+                /* 正常 + 未告警: 保持 */
             }
         }
     }

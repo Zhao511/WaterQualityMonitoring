@@ -351,6 +351,7 @@ function stopPolling() {
 function pollOnce() {
     if (!hwConfig.ak || !hwConfig.sk || !hwConfig.projectId) return;
     syncFromCloud().then(function() {
+        syncDeviceTime();   /* 设备列表已更新, 每分钟同步一次北京时间 */
         consecutivePollFailures = 0;
         console.log('[POLL] OK, ' + Object.keys(readJSON(DEVICES_FILE)).length + ' 设备');
     }).catch(function(err) {
@@ -395,21 +396,77 @@ function syncFromCloud() {
 
 // ==================== 报警命令下发 ====================
 // 使用 Alarm 服务的 set_alarm_mode / clear_alarm 命令（云端→设备）
+// 自动注入 RFID 参数, 使 ESP32 网关能路由到正确的终端设备
 function sendAlarmCommand(deviceId, commandName, paras) {
     var client = getClient();
     var body = new iotda.DeviceCommandRequest();
     body.withServiceId('Alarm');
     body.withCommandName(commandName);
-    body.withParas(paras || {});
+
+    // 注入 RFID: 从 devices.json 根据 sourceDeviceId 查找 rfid
+    var mergedParas = Object.assign({}, paras || {});
+    if (!mergedParas.rfid) {
+        var devices = readJSON(DEVICES_FILE);
+        var keys = Object.keys(devices);
+        for (var i = 0; i < keys.length; i++) {
+            if (devices[keys[i]].sourceDeviceId === deviceId) {
+                var rfid = devices[keys[i]].rfid;
+                if (rfid) {
+                    mergedParas.rfid = rfid;
+                    console.log('[ALARM] 注入终端RFID: ' + rfid + ' (device=' + deviceId + ')');
+                }
+                break;
+            }
+        }
+    }
+
+    body.withParas(mergedParas);
     var req = new iotda.CreateCommandRequest();
     req.withDeviceId(deviceId);
     req.withBody(body);
     return client.createCommand(req).then(function(res) {
-        console.log('[ALARM] 命令已下发: ' + deviceId + ' cmd=' + commandName, JSON.stringify(paras));
+        console.log('[ALARM] 命令已下发: ' + deviceId + ' cmd=' + commandName, JSON.stringify(mergedParas));
         return res;
     }).catch(function(err) {
         console.error('[ALARM] 下发失败: ' + deviceId, err.message);
         throw err;
+    });
+}
+
+// 通用命令下发 (任意 service/command)
+function sendDeviceCommand(deviceId, serviceId, commandName, paras) {
+    var client = getClient();
+    var body = new iotda.DeviceCommandRequest();
+    body.withServiceId(serviceId);
+    body.withCommandName(commandName);
+    body.withParas(paras || {});
+    var req = new iotda.CreateCommandRequest();
+    req.withDeviceId(deviceId);
+    req.withBody(body);
+    return client.createCommand(req).catch(function(err) {
+        console.error('[CMD] 下发失败: ' + deviceId + ' ' + serviceId + '/' + commandName, err.message);
+    });
+}
+
+// 定期同步设备时间为北京时间 (每分钟一次)
+var g_last_time_sync = 0;
+function syncDeviceTime() {
+    var now = Date.now();
+    if (now - g_last_time_sync < 60000) return;  /* 60s 间隔 */
+    g_last_time_sync = now;
+
+    var devices = readJSON(DEVICES_FILE);
+    var keys = Object.keys(devices);
+    keys.forEach(function(key) {
+        var dev = devices[key];
+        if (dev.status !== 'ONLINE') return;
+        /* Unix 时间戳 (UTC秒) → STM32 内部 +8h 转为北京时间 */
+        var unixSec = Math.floor(now / 1000);
+        console.log('[TIME] 同步北京时间到设备: ' + dev.sourceDeviceId);
+        sendDeviceCommand(dev.sourceDeviceId, 'gps', 'sync_time', {
+            source: 'web',
+            manual_time: String(unixSec)
+        });
     });
 }
 

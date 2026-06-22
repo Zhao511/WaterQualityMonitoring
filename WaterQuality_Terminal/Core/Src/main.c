@@ -9,10 +9,10 @@
  * 任务架构 (6 个任务):
  *
  *   vWatchdogTask(Prio 4, Stack 128W) — IWDG 看门狗监控 + 心跳检查
- *   vSensorTask  (Prio 3, Stack 384W) — 传感器 1s 采集 + 告警判定
- *   vGPSTask     (Prio 2, Stack 256W) — GPS 200ms 轮询 + NMEA→Decimal
+ *   vSensorTask  (Prio 3, Stack 384W) — 传感器 5s 采集 + 告警判定
+ *   vGPSTask     (Prio 2, Stack 256W) — GPS 1s 轮询 (按需开启) + NMEA→Decimal
  *   vIOTTask     (Prio 2, Stack 512W) — LoRa 收发 + 4 服务上报 + 命令处理
- *   vRFIDTask    (Prio 1, Stack 128W) — RFID 500ms 扫描
+ *   vRFIDTask    (Prio 1, Stack 128W) — RFID 2s 扫描
  *   vLEDTask     (Prio 1, Stack 128W) — 水质 & 命令 LED 指示
  * ============================================================
  */
@@ -60,6 +60,9 @@ WaterStatus  g_water_status;
 DeviceStatus g_device_status;
 GPS          g_gps_data;
 uint32_t     g_report_interval_sec = IOT_DEFAULT_REPORT_INTERVAL;
+uint8_t      g_terminal_addr = 0;    /* 终端LoRa地址: 0=广播, 读到RFID后自动设为UID最后一字节 */
+bool         g_gps_enabled  = false;  /* GPS按需开关: 上报窗口期/命令请求时开启 */
+bool         g_pending_device_status_report = false;  /* A0/A1 触发延迟上报 */
 
 /* ================================================================
  * 旧版数据结构 (保留用于队列兼容, 后续逐步迁移)
@@ -197,12 +200,11 @@ static void vSensorTask(void *pvParameters)
 
         /* 水质评估 → LED (已移除: LED 由平台 A0/A1 告警命令控制) */
 
-        /* 告警检测 (基于物模型阈值) */
-        Alarm alarm;
-        if (IOT_Alarm_Check(&g_water_status, g_water_status.rfid, &alarm) != 0)
-        {
-            xQueueSend(xAlarmQueue, &alarm, 0);  /* 非阻塞送告警 */
-        }
+        /* 告警检测已移至 Web/App 端 — 终端不再做阈值判断
+         * Alarm alarm;
+         * if (IOT_Alarm_Check(&g_water_status, g_water_status.rfid, &alarm) != 0) {
+         *     xQueueSend(xAlarmQueue, &alarm, 0);
+         * } */
 
         /* 调试输出 (含阈值, 便于判断 LED 颜色原因) */
         if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
@@ -273,61 +275,48 @@ static void vGPSTask(void *pvParameters)
 
     for (;;)
     {
-        GPS_ProcessData();
-        GPS_GetData(&raw_gps);
+        if (g_gps_enabled) {
+            GPS_ProcessData();
+            GPS_GetData(&raw_gps);
 
-        if (raw_gps.fix > 0)
-        {
-            xQueueOverwrite(xGPSQueue, &raw_gps);
-
-            /* 转换为物模型 GPS (decimal degrees), 加锁保护 */
-            if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+            if (raw_gps.fix > 0)
             {
-                IOT_GPS_GetDecimal(&g_gps_data);
-                xSemaphoreGive(xGPSMutex);
+                xQueueOverwrite(xGPSQueue, &raw_gps);
+
+                /* 转换为物模型 GPS (decimal degrees), 加锁保护 */
+                if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
+                {
+                    IOT_GPS_GetDecimal(&g_gps_data);
+                    xSemaphoreGive(xGPSMutex);
+                }
+
+                if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
+                {
+                    Debug_Printf("GPS: %.6f,%.6f Fix=%d Sat=%d\r\n",
+                                 g_gps_data.latitude, g_gps_data.longitude,
+                                 raw_gps.fix, raw_gps.satellites);
+                    xSemaphoreGive(xDebugMutex);
+                }
+
+                /* 电子围栏检查已移至 Web/App 端 — 终端不再做告警判定
+                 * if ((g_gps_cycle % 10) == 0) {
+                 *     if (IOT_GeoFence_Check(...) != 0) { ... }
+                 * } */
             }
 
-            if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
-            {
-                Debug_Printf("GPS: %.6f,%.6f Fix=%d Sat=%d\r\n",
-                             g_gps_data.latitude, g_gps_data.longitude,
-                             raw_gps.fix, raw_gps.satellites);
-                xSemaphoreGive(xDebugMutex);
-            }
+            g_gps_cycle++;
 
-            /* 电子围栏检查 (每 10 轮 ≈ 10s 检查一次, 避免频繁告警) */
             if ((g_gps_cycle % 10) == 0) {
-                if (IOT_GeoFence_Check(g_gps_data.latitude, g_gps_data.longitude) != 0) {
-                    Alarm fence_alarm;
-                    memset(&fence_alarm, 0, sizeof(fence_alarm));
-                    /* 使用静态序号避免与 IOT_Alarm_Check 冲突 */
-                    snprintf(fence_alarm.alarm_id, IOT_ALARM_ID_LEN, "ALM_FENCE");
-                    fence_alarm.alarm_type    = ALARM_TYPE_GPS;
-                    memcpy(fence_alarm.device_id, IOT_DEVICE_ID_DEFAULT, IOT_DEVICE_ID_MAX - 1);
-                    memcpy(fence_alarm.rfid, g_water_status.rfid, IOT_RFID_LEN - 1);
-                    fence_alarm.current_value = g_gps_data.latitude;  /* 位置数据 */
-                    fence_alarm.threshold     = g_gps_data.longitude;
-                    fence_alarm.alarm_level   = ALARM_LEVEL_SERIOUS;
-                    fence_alarm.status        = ALARM_STATUS_UNHANDLED;
-                    /* alarm_time 由 IOT_Report_Alarm 调用方填充, 此处用当前时间戳 */
-                    xQueueSend(xAlarmQueue, &fence_alarm, 0);
+                if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
+                    Debug_Printf("[GPS] cycle=%lu | Fix=%d Sat=%d\r\n",
+                                 g_gps_cycle, raw_gps.fix, raw_gps.satellites);
+                    xSemaphoreGive(xDebugMutex);
                 }
             }
         }
 
-        /* 心跳 + 周期日志 (每 10 轮 ≈ 10s 输出摘要) */
-        g_gps_cycle++;
         WDG_Heartbeat(HEARTBEAT_GPS);
-
-        if ((g_gps_cycle % 10) == 0) {
-            if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
-                Debug_Printf("[GPS] cycle=%lu | Fix=%d Sat=%d\r\n",
-                             g_gps_cycle, raw_gps.fix, raw_gps.satellites);
-                xSemaphoreGive(xDebugMutex);
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));  /* 1s GPS 轮询, 常态 RX */
+        vTaskDelay(pdMS_TO_TICKS(1000));  /* 1s 周期, GPS使能时读数, 禁用时空转 */
     }
 }
 
@@ -356,6 +345,13 @@ static void vRFIDTask(void *pvParameters)
                      rfid.tag_id[0], rfid.tag_id[1],
                      rfid.tag_id[2], rfid.tag_id[3],
                      rfid.tag_id[4]);
+
+            /* 从 RFID UID 最后一字节自动派生终端 LoRa 地址
+             * 避开 0x00(广播) 和 0xFF(保留), 确保每个终端有唯一地址 */
+            g_terminal_addr = rfid.tag_id[4];
+            if (g_terminal_addr == 0 || g_terminal_addr == 0xFF) {
+                g_terminal_addr = 1;
+            }
 
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS)
             {
@@ -486,7 +482,13 @@ static void vIOTTask(void *pvParameters)
             last_device_status = tick_count;
         }
 
-        /* --- 定时: GPS 上报 (30s) --- */
+        /* --- 定时: GPS 上报 (60s, 按需开启) ---
+         * 上报前 15s 开启 GPS 预热, 上报后关闭以省电 */
+        #define GPS_WARMUP_SEC  15
+        if (tick_count - last_gps_report >= (IOT_GPS_REPORT_INTERVAL - GPS_WARMUP_SEC))
+        {
+            g_gps_enabled = true;  /* 提前开启预热 */
+        }
         if (tick_count - last_gps_report >= IOT_GPS_REPORT_INTERVAL)
         {
             if (xSemaphoreTake(xGPSMutex, pdMS_TO_TICKS(50)) == pdPASS)
@@ -495,6 +497,7 @@ static void vIOTTask(void *pvParameters)
                 xSemaphoreGive(xGPSMutex);
             }
             last_gps_report = tick_count;
+            g_gps_enabled = false;  /* 上报完成, 关闭 GPS */
         }
 
         /* --- Alarm 上报 (限流: 最短间隔内同类型+相近值只发一次) --- */
@@ -545,6 +548,13 @@ static void vIOTTask(void *pvParameters)
 
         /* ---- 上报后立即检查 RX (防止 TX 期间到达的数据积压) ---- */
         IOT_Process_Incoming();
+
+        /* A0/A1 触发的延迟 DeviceStatus 上报 (避免在 IOT_Process_Incoming 内同步阻塞) */
+        if (g_pending_device_status_report) {
+            g_pending_device_status_report = false;
+            IOT_DeviceStatus_Update(&g_device_status);
+            IOT_Report_DeviceStatus(&g_device_status);
+        }
 
         /* 心跳 + 周期日志 (每 5 轮 ≈ 5s 输出摘要) */
         g_iot_cycle++;

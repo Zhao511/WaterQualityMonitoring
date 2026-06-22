@@ -12,6 +12,7 @@ static String rx_buffer = "";
 static uint32_t g_lora_heartbeat_last = 0;
 static uint32_t g_lora_bytes_total = 0;
 static uint32_t g_lora_frames_total = 0;
+static uint32_t g_last_rx_ms = 0;        /* 最后一次收到 STM32 数据的时间戳 */
 
 /* ================================================================
  * 辅助: 切换串口波特率
@@ -151,25 +152,35 @@ void lora_send(const String &json)
 /* ================================================================
  * 帧协议发送 → STM32 (规范帧 + 停等ACK + 间隔 + 重发)
  * ================================================================ */
-bool lora_send_framed(const String &payload, int max_retries)
+bool lora_send_framed(const String &payload, uint8_t dst_addr, int max_retries)
 {
-    uint8_t len = (uint8_t)payload.length();
-    if (len > LORA_FRAME_MAX_PAYLOAD) {
-        DEBUG_SERIAL.printf("[LoRa] FRAME too large: %d > %d\n", len, LORA_FRAME_MAX_PAYLOAD);
+    uint8_t payload_len = (uint8_t)payload.length();
+    if (payload_len > LORA_FRAME_MAX_PAYLOAD) {
+        DEBUG_SERIAL.printf("[LoRa] FRAME too large: %d > %d\n", payload_len, LORA_FRAME_MAX_PAYLOAD);
         return false;
     }
 
-    /* 构造帧: [HEADER] [LEN] [PAYLOAD...] [XOR_CHECKSUM] */
-    uint8_t frame[260];  /* 1+1+250+1=253, 留余量 */
+    /* 构造帧: [HEADER] [LEN] [DST_ADDR] [PAYLOAD...] [XOR_CHECKSUM]
+     * LEN = 1 (DST_ADDR) + payload_len */
+    uint8_t len = payload_len + 1;
+    uint8_t frame[262];  /* 1+1+1+200+1=204, 留余量 */
     frame[0] = LORA_FRAME_HEADER;
     frame[1] = len;
-    memcpy(&frame[2], payload.c_str(), len);
-    uint8_t csum = LORA_FRAME_HEADER ^ len;
-    for (uint8_t i = 0; i < len; i++) {
+    frame[2] = dst_addr;
+    memcpy(&frame[3], payload.c_str(), payload_len);
+    uint8_t csum = LORA_FRAME_HEADER ^ len ^ dst_addr;
+    for (uint8_t i = 0; i < payload_len; i++) {
         csum ^= (uint8_t)payload[i];
     }
-    frame[2 + len] = csum;
-    int frame_size = 3 + len;
+    frame[3 + payload_len] = csum;
+    int frame_size = 4 + payload_len;  /* 帧头+LEN+地址+载荷+校验 */
+
+    /* 碰撞避免策略:
+     *   - STM32 刚发完数据 → 立即在 RX 窗口发送 (最佳时机)
+     *   - 无最近 RX → 随机抖动后发送
+     *   - 重试: 指数退避 (200/400/800/1200/2000/3000ms) → 拉长时间窗, 跨越多个 STM32 TX 周期
+     *   - 发送前检测: 如果 LoRa 串口有数据到达, STM32 正在发送, 等待完成 */
+    static const int backoff_ms[] = {200, 400, 800, 1200, 2000, 3000};
 
     /* 禁止高速连发: 距上次发送至少 200ms */
     static uint32_t s_last_send_ms = 0;
@@ -180,7 +191,37 @@ bool lora_send_framed(const String &payload, int max_retries)
 
     for (int retry = 0; retry <= max_retries; retry++)
     {
-        /* 清空 RX 缓冲 (丢弃上次 NAK/残留的碎片字节) */
+        /* 首次: 如果最近收到过 STM32 数据 (<2s), STM32 大概率在 RX 模式, 用小抖动
+         * 重试: 指数退避, 避免与 STM32 周期性上报同步 */
+        if (retry == 0) {
+            uint32_t ms_since_rx = millis() - g_last_rx_ms;
+            if (ms_since_rx < 2000) {
+                /* STM32 刚发过数据, 大概率在 RX → 小抖动立即发 */
+                int jitter = LORA_FRAME_TX_JITTER_MIN + (esp_random() % (LORA_FRAME_TX_JITTER_MAX - LORA_FRAME_TX_JITTER_MIN));
+                DEBUG_SERIAL.printf("[LoRa] recent RX (%lums ago), quick send jitter=%dms\n", ms_since_rx, jitter);
+                delay(jitter);
+            } else {
+                /* 长时间没收到数据, 可能 STM32 在 TX → 随机等待避开 */
+                int wait_ms = 100 + (esp_random() % 401);  /* 100~500ms */
+                DEBUG_SERIAL.printf("[LoRa] no recent RX, wait=%dms\n", wait_ms);
+                delay(wait_ms);
+            }
+        } else {
+            int idx = (retry - 1) % 6;
+            int bo = backoff_ms[idx];
+            DEBUG_SERIAL.printf("[LoRa] backoff=%dms (retry=%d)\n", bo, retry);
+            delay(bo);
+        }
+
+        /* 发送前检测: 如果串口有数据, STM32 正在发送, 等它完成 */
+        uint32_t listen_start = millis();
+        while (LORA_SERIAL.available() > 0 && (millis() - listen_start < 3000)) {
+            while (LORA_SERIAL.available()) { LORA_SERIAL.read(); }
+            delay(100);
+            g_last_rx_ms = millis();  /* 更新: 刚收到数据, STM32 即将进入 RX */
+        }
+
+        /* 清空 RX 缓冲 (丢弃残留碎片) */
         while (LORA_SERIAL.available()) { LORA_SERIAL.read(); }
 
         lora_wait_aux(500);
@@ -189,8 +230,8 @@ bool lora_send_framed(const String &payload, int max_retries)
         LORA_SERIAL.flush();
         s_last_send_ms = millis();
 
-        DEBUG_SERIAL.printf("[LoRa TX FRAME] len=%d retry=%d csum=0x%02X\n",
-                            len, retry, csum);
+        DEBUG_SERIAL.printf("[LoRa TX FRAME] payload=%d dst=%d retry=%d csum=0x%02X\n",
+                            payload_len, dst_addr, retry, csum);
 
         /* 等 ACK: 匹配 3 字节模式 0xAA 0x00 0xAA */
         uint8_t ack_state = 0;  /* 0=等帧头 1=等长度 2=等校验 */
@@ -248,6 +289,7 @@ void lora_loop()
             {
                 rx_buffer.trim();
                 g_lora_frames_total++;
+                g_last_rx_ms = millis();   /* 记录最后 RX 时间 */
 
                 DEBUG_SERIAL.print("[LoRa RX] ");
                 DEBUG_SERIAL.println(rx_buffer);
