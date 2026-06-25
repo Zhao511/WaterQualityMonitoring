@@ -407,8 +407,9 @@ static void vIOTTask(void *pvParameters)
 
     for (;;)
     {
-        /* 诊断: 每次循环无条件输出, 用于定位任务是否在运行 */
-        {
+        /* 诊断: 每 60 次循环 (~60s) 输出存活日志, 生产环境避免每秒打印
+         * 注释: 将 % 60 改为 % 1 可恢复每秒打印 (调试用) */
+        if ((tick_count % 60) == 0) {
             static uint32_t last_tick_time = 0;
             uint32_t now_tick = xTaskGetTickCount();
             uint32_t elapsed = (last_tick_time > 0) ? (now_tick - last_tick_time) : 0;
@@ -560,7 +561,7 @@ static void vIOTTask(void *pvParameters)
         g_iot_cycle++;
         WDG_Heartbeat(HEARTBEAT_IOT);
 
-        if ((g_iot_cycle % 5) == 0) {
+        if ((g_iot_cycle % 30) == 0) {
             if (xSemaphoreTake(xDebugMutex, pdMS_TO_TICKS(100)) == pdPASS) {
                 Debug_Printf("[IoT] cycle=%lu | interval=%lus\r\n",
                              g_iot_cycle, g_report_interval_sec);

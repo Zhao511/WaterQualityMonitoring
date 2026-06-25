@@ -335,6 +335,27 @@ void LoRa_SendData(uint8_t *data, uint16_t length)
 }
 
 /**
+ * @brief  将 ISR 线性缓冲区数据转移到环形缓冲区 (不消费环形缓冲区的已有数据)
+ *
+ * 用途: 在长时间 LoRa 发送操作 (如 ACK+响应) 期间, 定期调用此函数
+ *       将 ISR 积累的新字节转移到环形缓冲区, 防止线性缓冲区溢出丢数据。
+ *       数据保留在环形缓冲区中, 由下一次 IOT_Process_Incoming 统一消费。
+ */
+void LoRa_FlushToRingBuffer(void)
+{
+    uint16_t count;
+    __disable_irq();
+    count = lora_rx_index;
+    lora_rx_index = 0;
+    __enable_irq();
+
+    for (uint16_t i = 0; i < count; i++)
+    {
+        RingBuffer_Put(&lora_rb, lora_rx_buffer[i]);
+    }
+}
+
+/**
  * @brief  从环形缓冲区读取 LoRa 接收数据（O(n) 复杂度，无内存移动）
  * @param  buffer:     输出缓冲区
  * @param  max_length: 最多读取字节数

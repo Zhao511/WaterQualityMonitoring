@@ -58,6 +58,7 @@ extern uint16_t lora_rx_index;
 void     LoRa_Init(void);
 void     LoRa_SendData(uint8_t *data, uint16_t length);
 uint16_t LoRa_ReceiveData(uint8_t *buffer, uint16_t max_length);
+void     LoRa_FlushToRingBuffer(void);  /* 仅转移 ISR→环形缓冲, 不消费 */
 void     LoRa_SetAddress(uint8_t address);
 void     LoRa_SetChannel(uint8_t channel);
 void     LoRa_SetMode(uint8_t mode);      /* 0=透传, 1=配置 */

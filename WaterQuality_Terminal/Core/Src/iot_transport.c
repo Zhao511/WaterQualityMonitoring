@@ -18,6 +18,18 @@ extern volatile uint32_t g_lora_isr_byte_count;
 #include <string.h>
 
 /* ================================================================
+ * 编译期开关: 帧协议层诊断日志
+ *   0 = 禁用 (生产模式, 减少中断屏蔽窗口)
+ *   1 = 启用 (调试模式)
+ * ================================================================ */
+#define IOT_TRANSPORT_DEBUG  0
+
+/* ================================================================
+ * 帧接收超时 (ms) — 防止状态机在噪声干扰下永久卡在 FRAME_READING
+ * ================================================================ */
+#define FRAME_TIMEOUT_MS     500
+
+/* ================================================================
  * 属性上报 — 通过 LoRa 发送序列化 JSON
  * ================================================================ */
 void IOT_Report_Property(const char *json_payload)
@@ -31,7 +43,9 @@ void IOT_Report_Property(const char *json_payload)
         if (total < sizeof(tx_buf)) {
             LoRa_SendData((uint8_t *)tx_buf, total);
             LoRa_WaitAux(LORA_AUX_TIMEOUT_MS);  /* 等待 RF 传输完成 */
+#if IOT_TRANSPORT_DEBUG
             Debug_Printf("IOT TX: %s\r\n", json_payload);
+#endif
         }
     } else if (len >= (LORA_DATA_SIZE - 2)) {
         /* JSON 超过 LoRa 单帧上限, 丢弃并告警 */
@@ -66,6 +80,7 @@ static uint8_t    frame_length  = 0;   /* 载荷长度 (不含地址字节)    *
 static uint8_t    frame_index   = 0;
 static bool       frame_ignored = false; /* 地址不匹配, 静默丢弃    */
 static uint8_t    frame_dst_addr = 0;   /* 实际收到的目标地址(用于校验)*/
+static TickType_t frame_start_tick = 0; /* 帧接收开始时间 (超时复位) */
 
 /* ---- 发送 ACK/NAK 帧 (3 字节: 帧头+长度+校验) ---- */
 static void Frame_SendAck(void)
@@ -105,23 +120,58 @@ void IOT_Process_Incoming(void)
     uint16_t len;
 
     len = LoRa_ReceiveData(rx_buf, sizeof(rx_buf) - 1);
+#if IOT_TRANSPORT_DEBUG
     {
         uint32_t isr_cnt = g_lora_isr_byte_count;
         Debug_Printf("[IoT] RX len=%u ISR=%lu state=%d\r\n",
                      len, (unsigned long)isr_cnt, (int)frame_state);
     }
-    if (len == 0) return;
+#endif
+    if (len == 0) {
+        /* 帧接收超时检查: 非 IDLE 状态下超时 → 复位状态机
+         * 防止噪声字节伪装帧头后状态机永久卡在 FRAME_READING */
+        if (frame_state != FRAME_IDLE) {
+            TickType_t elapsed = xTaskGetTickCount() - frame_start_tick;
+            if (elapsed >= pdMS_TO_TICKS(FRAME_TIMEOUT_MS)) {
+#if IOT_TRANSPORT_DEBUG
+                Debug_Printf("[IoT] Frame timeout (%lums), resetting state machine\r\n",
+                             (unsigned long)(elapsed * portTICK_PERIOD_MS));
+#endif
+                frame_state   = FRAME_IDLE;
+                frame_index   = 0;
+                frame_ignored = false;
+            }
+        }
+        return;
+    }
 
     /* 逐字节喂入状态机 */
     for (uint16_t i = 0; i < len; i++)
     {
         uint8_t byte = rx_buf[i];
 
+        /* 帧超时保护: 非 IDLE 状态下超时 → 丢弃部分帧, 重新开始
+         * 防止噪声伪装帧头后状态机缓慢消费后续字节卡在 FRAME_READING */
+        if (frame_state != FRAME_IDLE) {
+            TickType_t elapsed = xTaskGetTickCount() - frame_start_tick;
+            if (elapsed >= pdMS_TO_TICKS(FRAME_TIMEOUT_MS)) {
+#if IOT_TRANSPORT_DEBUG
+                Debug_Printf("[IoT] Frame timeout in loop (%lums), reset\r\n",
+                             (unsigned long)(elapsed * portTICK_PERIOD_MS));
+#endif
+                frame_state   = FRAME_IDLE;
+                frame_index   = 0;
+                frame_ignored = false;
+                break;  /* 剩余字节丢弃, 下一周期重新解析 */
+            }
+        }
+
         switch (frame_state)
         {
         case FRAME_IDLE:
             if (byte == FRAME_HEADER) {
                 frame_state = FRAME_GOT_HEADER;
+                frame_start_tick = xTaskGetTickCount();  /* 记录帧开始时间 */
             }
             /* 非帧头字节: 丢弃 (可能是旧数据碎片) */
             break;
@@ -193,14 +243,21 @@ void IOT_Process_Incoming(void)
                     calc_csum ^= frame_payload[j];
                 }
 
+#if IOT_TRANSPORT_DEBUG
                 Debug_Printf("[IoT] FRAME csum: calc=0x%02X recv=0x%02X len=%d addr=%d ignored=%d\r\n",
                              calc_csum, byte, frame_length, frame_dst_addr, frame_ignored);
+#endif
 
                 if (byte == calc_csum) {
                     /* 校验通过 → ACK → 处理载荷 */
                     Frame_SendAck();
+                    /* ACK 发送期间 ISR 可能已积累新字节, 转移到环形缓冲区防止溢出 */
+                    LoRa_FlushToRingBuffer();
+
                     frame_payload[frame_length] = '\0';
+#if IOT_TRANSPORT_DEBUG
                     Debug_Printf("IOT RX[%u]: %s\r\n", frame_length, frame_payload);
+#endif
 
                     /* 判断载荷类型 */
                     if (frame_length == 2 && frame_payload[0] == 'A') {
@@ -222,6 +279,7 @@ void IOT_Process_Incoming(void)
                         /* ---- ping 探测 ---- */
                         IOT_Report_Property(
                             "{\"rsp\":\"ping\",\"result\":true,\"msg\":\"pong\"}");
+                        LoRa_FlushToRingBuffer();  /* 响应发送期间可能有新数据到达 */
                     }
                     else
                     {
@@ -242,11 +300,13 @@ void IOT_Process_Incoming(void)
                                     ok ? "ok" : "fail", rsp, sizeof(rsp));
                             }
                             IOT_Report_Property(rsp);
+                            LoRa_FlushToRingBuffer();  /* 响应发送期间可能有新数据到达 */
                         }
                         else
                         {
                             IOT_Report_Property(
                                 "{\"rsp\":\"_\",\"result\":false,\"msg\":\"parse error\"}");
+                            LoRa_FlushToRingBuffer();  /* 响应发送期间可能有新数据到达 */
                         }
                     }
                 }
@@ -254,8 +314,11 @@ void IOT_Process_Incoming(void)
                 {
                     /* 校验失败 → NAK, 丢弃帧 */
                     Frame_SendNak();
+                    LoRa_FlushToRingBuffer();  /* NAK 发送期间可能有新数据到达 */
+#if IOT_TRANSPORT_DEBUG
                     Debug_Printf("[IoT] Frame csum mismatch (calc=0x%02X recv=0x%02X)\r\n",
                                  calc_csum, byte);
+#endif
                 }
                 frame_state = FRAME_IDLE;
             }
